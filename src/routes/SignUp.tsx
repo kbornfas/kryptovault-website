@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-const SignUp: React.FC = () => {
+const SignUp = () => {
   const navigate = useNavigate();
   const { signup } = useAuth();
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
