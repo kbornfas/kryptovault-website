@@ -5,7 +5,7 @@ export default function Navbar() {
         KryptoVault
       </h1>
       <ul className="flex gap-6 text-gray-200">
-        <li><a href="#" className="hover:text-purple-400">Hme</a></li>
+        <li><a href="#" className="hover:text-purple-400">Home</a></li>
         <li><a href="#" className="hover:text-purple-400">Plans</a></li>
         <li><a href="#" className="hover:text-purple-400">About</a></li>
         <li><a href="#" className="hover:text-purple-400">Contact</a></li>
