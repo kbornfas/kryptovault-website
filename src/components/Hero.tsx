@@ -1,6 +1,13 @@
 import { motion } from "framer-motion";
+import { useRef } from "react";
 
 export default function Hero() {
+  const plansRef = useRef<HTMLDivElement>(null);
+
+  const scrollToPlans = () => {
+    plansRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
     <section className="text-center py-24 bg-gradient-to-r from-indigo-800 to-purple-700">
       <motion.h1
@@ -17,9 +24,13 @@ export default function Hero() {
         let your investments work for you.
       </p>
 
-      <button className="mt-8 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-xl text-white font-semibold">
+      <button 
+        onClick={scrollToPlans}
+        className="mt-8 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-xl text-white font-semibold transition-colors"
+      >
         Start Investing
       </button>
+      <div ref={plansRef} />
     </section>
   );
 }
