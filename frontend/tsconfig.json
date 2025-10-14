@@ -36,10 +36,8 @@
     }
   },
   "include": [
-    "src/**/*",
-    "app/**/*",
-    "components/**/*",
-    "routes/**/*"
+    "src",
+    "vite.config.ts"
   ],
   "exclude": [
     "node_modules"
