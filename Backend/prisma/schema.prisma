@@ -1,0 +1,185 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String           @id @default(uuid())
+  email          String           @unique
+  password       String
+  name           String
+  role           Role            @default(USER)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  investments    Investment[]
+  transactions   Transaction[]
+  notifications  Notification[]
+  walletBalance  Decimal         @default(0)
+  kycStatus      KYCStatus       @default(PENDING)
+  profile        Profile?
+}
+
+model Profile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id])
+  phoneNumber   String?
+  address       String?
+  dateOfBirth   DateTime?
+  documents     Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Investment {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  planId        String
+  plan          Plan      @relation(fields: [planId], references: [id])
+  amount        Decimal
+  status        InvestmentStatus @default(ACTIVE)
+  startDate     DateTime  @default(now())
+  endDate       DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  earnings      Decimal   @default(0)
+}
+
+model Plan {
+  id            String    @id @default(uuid())
+  name          String    @unique
+  description   String
+  minAmount     Decimal
+  maxAmount     Decimal?
+  returnRate    Decimal
+  duration      Int       // Duration in days
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  investments   Investment[]
+}
+
+model Transaction {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  type          TransactionType
+  amount        Decimal
+  status        TransactionStatus @default(PENDING)
+  cryptoType    CryptoType?
+  txHash        String?   // Blockchain transaction hash
+  walletAddress String?   // Wallet address used for the transaction
+  description   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Notification {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  title       String
+  message     String
+  read        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model CryptoWallet {
+  id            String    @id @default(uuid())
+  cryptoType    CryptoType
+  address       String
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([cryptoType, address])
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum CryptoType {
+  BTC
+  ETH
+  USDT
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  EARNING
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum InvestmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum KYCStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum KYCStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvestmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  INVESTMENT
+  EARNING
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CryptoType {
+  BTC
+  ETH
+  SOL
+  BNB
+  TRX
+}
+
+model Notification {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  title         String
+  message       String
+  read          Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
