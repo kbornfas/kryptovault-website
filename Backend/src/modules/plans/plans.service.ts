@@ -72,7 +72,7 @@ export class PlansService {
     const plan = await this.getPlanById(planId);
     if (!plan) throw new Error('Plan not found');
 
-    const monthlyReturn = (amount * (plan.returnRate as number)) / 100;
+    const monthlyReturn = (amount * Number(plan.returnRate)) / 100;
     const annualReturn = monthlyReturn * 12;
 
     return {

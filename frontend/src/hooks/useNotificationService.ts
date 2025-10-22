@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { io } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 
 interface Notification {

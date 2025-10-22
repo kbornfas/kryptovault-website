@@ -122,7 +122,7 @@ export class AdminService {
 
   async updateTransactionStatus(
     transactionId: string,
-    status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'CANCELLED',
+    status: 'PENDING' | 'COMPLETED' | 'FAILED',
   ) {
     const transaction = await this.prisma.transaction.findUnique({
       where: { id: transactionId },

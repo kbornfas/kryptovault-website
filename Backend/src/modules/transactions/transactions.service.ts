@@ -13,7 +13,7 @@ export class TransactionsService {
       select: { walletBalance: true }
     });
 
-    if (!user || user.walletBalance < amount) {
+    if (!user || Number(user.walletBalance) < amount) {
       throw new Error('Insufficient balance');
     }
 

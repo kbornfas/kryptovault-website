@@ -4,7 +4,8 @@ import { defineConfig } from "vite";
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react()] as any,
+  base: '/kryptovault-website/', // GitHub Pages base path
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -14,9 +15,15 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        target: process.env.VITE_API_URL || "http://localhost:3000",
         changeOrigin: true,
+        rewrite: (path) => path,
       },
     },
+  },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    emptyOutDir: true,
   },
 });

@@ -58,7 +58,7 @@ export class InvestmentsService implements OnModuleInit {
     await this.prisma.transaction.create({
       data: {
         userId,
-        type: 'INVESTMENT',
+        type: 'DEPOSIT',
         amount,
         status: 'COMPLETED',
         description: `Investment in ${plan.name} plan`,
@@ -166,11 +166,5 @@ export class InvestmentsService implements OnModuleInit {
     }
 
     return calculateInvestmentStats(investment);
-
-    return {
-      investment,
-      currentEarnings: Math.max(0, currentEarnings), // Ensure earnings are not negative
-      projectedEarnings,
-    };
   }
 }

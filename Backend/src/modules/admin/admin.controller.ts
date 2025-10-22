@@ -63,7 +63,7 @@ export class AdminController {
   @Put('transactions/:id/status')
   async updateTransactionStatus(
     @Param('id') transactionId: string,
-    @Body('status') status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'CANCELLED',
+    @Body('status') status: 'PENDING' | 'COMPLETED' | 'FAILED',
   ) {
     return this.adminService.updateTransactionStatus(transactionId, status);
   }

@@ -1,6 +1,45 @@
 # KryptoVault Investment Platform
 
-A full-stack investment platform built with NestJS (Backend) and React + Vite (Frontend).
+A full-stack cryptocurrency investment platform built with NestJS (Backend) and React + Vite (Frontend).
+
+[![Deploy](https://img.shields.io/badge/Deploy-Ready-brightgreen)](DEPLOYMENT.md)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+## ✨ Features
+
+- 💰 Multiple investment plans with customizable returns
+- 👤 User authentication and authorization
+- 🔐 KYC (Know Your Customer) verification system
+- 💳 Crypto payment integration (BTC, ETH, USDT)
+- 📊 Real-time earnings tracking
+- 🔔 Push notifications
+- 📱 Responsive admin dashboard
+- 🎨 Modern UI with Chakra UI
+- 🔒 Secure JWT-based authentication
+
+## 🚀 Quick Deploy
+
+### Option 1: Docker (Recommended)
+
+**Windows:**
+```powershell
+.\deploy.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+### Option 2: Cloud Platforms
+
+See our comprehensive [Deployment Guide](DEPLOYMENT.md) for:
+- Railway
+- Vercel + Railway
+- AWS EC2
+- DigitalOcean
+- And more!
 
 ## Project Structure
 

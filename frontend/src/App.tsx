@@ -7,8 +7,8 @@ import Navbar from "./components/Navbar";
 import { AuthProvider } from "./context/AuthContext";
 import About from "./routes/About";
 import Contact from "./routes/Contact";
+import Login from "./routes/Login";
 import SignUp from "./routes/SignUp";
-import Login from "./routes/login";
 
 const App: React.FC = () => {
   return (

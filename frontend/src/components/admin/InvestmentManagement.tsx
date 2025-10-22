@@ -13,6 +13,21 @@ import {
 import axios from 'axios';
 import { useQuery } from 'react-query';
 
+interface Investment {
+  id: string;
+  amount: number;
+  status: string;
+  startDate: string;
+  endDate: string | null;
+  currentROI: number;
+  user: {
+    email: string;
+  };
+  plan: {
+    name: string;
+  };
+}
+
 const InvestmentManagement = () => {
   const toast = useToast();
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -40,7 +55,7 @@ const InvestmentManagement = () => {
           </Tr>
         </Thead>
         <Tbody>
-          {investments.map((investment) => (
+          {investments.map((investment: Investment) => (
             <Tr key={investment.id}>
               <Td>{investment.user.email}</Td>
               <Td>{investment.plan.name}</Td>
@@ -59,8 +74,8 @@ const InvestmentManagement = () => {
                 </Badge>
               </Td>
               <Td>{new Date(investment.startDate).toLocaleDateString()}</Td>
-              <Td>{new Date(investment.endDate).toLocaleDateString()}</Td>
-              <Td>${investment.currentROI}</Td>
+              <Td>{investment.endDate ? new Date(investment.endDate).toLocaleDateString() : 'Active'}</Td>
+              <Td>${investment.currentROI.toFixed(2)}</Td>
             </Tr>
           ))}
         </Tbody>

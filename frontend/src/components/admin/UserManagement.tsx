@@ -14,17 +14,31 @@ import {
 import axios from 'axios';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  kycStatus: string;
+  walletBalance: number;
+  role: string;
+}
+
+interface UpdateKycParams {
+  userId: string;
+  status: string;
+}
+
 const UserManagement = () => {
   const queryClient = useQueryClient();
   const toast = useToast();
   const bgColor = useColorModeValue('white', 'gray.800');
 
-  const { data: users, isLoading } = useQuery('users', () =>
+  const { data: users, isLoading } = useQuery<User[]>('users', () =>
     axios.get('/api/admin/users').then((res) => res.data)
   );
 
-  const updateKycStatus = useMutation(
-    ({ userId, status }) =>
+  const updateKycStatus = useMutation<unknown, unknown, UpdateKycParams>(
+    ({ userId, status }: UpdateKycParams) =>
       axios.put(`/api/admin/users/${userId}/kyc`, { status }),
     {
       onSuccess: () => {
@@ -35,7 +49,7 @@ const UserManagement = () => {
           duration: 3000,
         });
       },
-      onError: (error) => {
+      onError: (error: any) => {
         toast({
           title: 'Error updating KYC status',
           description: error.response?.data?.message || 'Something went wrong',
@@ -46,7 +60,7 @@ const UserManagement = () => {
     }
   );
 
-  if (isLoading) {
+  if (isLoading || !users) {
     return <Box>Loading...</Box>;
   }
 
