@@ -41,7 +41,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
 # Generate Prisma client for the runtime image
-RUN pnpm prisma generate
+RUN pnpm dlx prisma@5.22.0 generate
 
 # Expose port
 EXPOSE 3000
