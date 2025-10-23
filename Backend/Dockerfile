@@ -21,9 +21,6 @@ RUN pnpm prisma generate
 # Build the application
 RUN pnpm run build
 
-# Remove dev dependencies to keep the runtime image slim
-RUN pnpm prune --prod
-
 # Production stage
 FROM node:18-alpine
 
@@ -32,10 +29,12 @@ WORKDIR /app
 # Install pnpm (match builder version)
 RUN npm install -g pnpm@10.19.0
 
-# Copy runtime dependencies and manifest from the builder
+# Copy package manifest for production install
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
-COPY --from=builder /app/node_modules ./node_modules
+
+# Install production dependencies (allow lifecycle scripts for Prisma)
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts=false
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
