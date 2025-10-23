@@ -6,11 +6,11 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm (pin to v8 for predictable lifecycle script behavior)
-RUN npm install -g pnpm@8.15.7
+# Install pnpm (pin to v9 to match lockfile format v9)
+RUN npm install -g pnpm@9.12.3
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
+# Install dependencies (allow lifecycle scripts for Prisma binaries)
+RUN pnpm install --frozen-lockfile --ignore-scripts=false
 
 # Copy source code and prisma schema
 COPY . .
@@ -27,13 +27,13 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install pnpm (match builder version)
-RUN npm install -g pnpm@8.15.7
+RUN npm install -g pnpm@9.12.3
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
+# Install production dependencies only (keep lifecycle scripts enabled)
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts=false
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
