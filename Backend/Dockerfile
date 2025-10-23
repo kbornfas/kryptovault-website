@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Install pnpm (match lockfile's pnpm major version)
-RUN npm install -g pnpm@10.19.0
+RUN npm install -g pnpm@latest
 
 # Install dependencies and allow lifecycle scripts (needed for Prisma)
 RUN pnpm install --frozen-lockfile --ignore-scripts=false
@@ -27,7 +27,7 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install pnpm (match builder version)
-RUN npm install -g pnpm@10.19.0
+RUN npm install -g pnpm@latest
 
 # Copy package manifest for production install
 COPY --from=builder /app/package.json ./package.json
