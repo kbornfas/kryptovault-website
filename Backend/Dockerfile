@@ -36,10 +36,12 @@ COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 # Install production dependencies (allow lifecycle scripts for Prisma)
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts=false
 
-# Copy built application from builder
+# Copy built application and Prisma schema from builder
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
+
+# Generate Prisma client for the runtime image
+RUN pnpm prisma generate
 
 # Expose port
 EXPOSE 3000
