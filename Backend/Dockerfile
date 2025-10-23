@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm
-RUN npm install -g pnpm
+# Install pnpm (pin to v8 for predictable lifecycle script behavior)
+RUN npm install -g pnpm@8.15.7
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -26,8 +26,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Install pnpm
-RUN npm install -g pnpm
+# Install pnpm (match builder version)
+RUN npm install -g pnpm@8.15.7
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
