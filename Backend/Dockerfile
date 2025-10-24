@@ -41,7 +41,10 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
 # Generate Prisma client for the runtime image
-RUN pnpm dlx prisma@5.22.0 generate
+# Note: do NOT run `pnpm prisma generate` in the runtime image because
+# the `prisma` CLI is a devDependency. Instead we rely on `@prisma/client`'s
+# postinstall (run by `pnpm install --prod --ignore-scripts=false`) to
+# place the runtime engine files under node_modules/.prisma.
 
 # Expose port
 EXPOSE 3000
