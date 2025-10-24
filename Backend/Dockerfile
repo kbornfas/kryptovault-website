@@ -26,6 +26,9 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Install system dependencies required by Prisma (OpenSSL runtime)
+RUN apk add --no-cache openssl
+
 # Install pnpm (match builder version)
 RUN npm install -g pnpm@latest
 
@@ -33,8 +36,8 @@ RUN npm install -g pnpm@latest
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
-# Install production dependencies (allow lifecycle scripts for Prisma)
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts=false
+# Install dependencies (keep dev deps so Prisma CLI is available)
+RUN pnpm install --frozen-lockfile --ignore-scripts=false
 
 # Copy built application and Prisma schema from builder
 COPY --from=builder /app/dist ./dist
@@ -50,4 +53,4 @@ COPY --from=builder /app/prisma ./prisma
 EXPOSE 3000
 
 # Run migrations and start the application
-CMD ["sh", "-c", "pnpm prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main"]
