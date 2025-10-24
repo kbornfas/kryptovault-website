@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 const WALLET_ADDRESSES = {
   BTC: 'bc1q0pu7d8ku2wa36zx3wace2t4rx60a55j24c4vxp',
   ETH: '0x3E115175B56E078597fC7f71E983Ded09f89E20f',
+  USDT: '0x3E115175B56E078597fC7f71E983Ded09f89E20f',
   SOL: '5AXhv6keZd1xRHDxgTgKG88V5s942odmyCBEqcLg2229',
   BNB: '0x3E115175B56E078597fC7f71E983Ded09f89E20f',
   TRX: 'TYM2eXoatzLPmxcjWSJ2s7w7ChRMKXxiuj',
@@ -14,6 +15,7 @@ const WALLET_ADDRESSES = {
 const MIN_CONFIRMATIONS = {
   BTC: 3,
   ETH: 12,
+  USDT: 12,
   SOL: 32,
   BNB: 12,
   TRX: 20,

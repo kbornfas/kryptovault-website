@@ -18,6 +18,11 @@ model User {
   role           Role            @default(USER)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  isEmailVerified Boolean        @default(false)
+  verificationCode String?
+  verificationExpiresAt DateTime?
+  verifiedAt     DateTime?
+  lastLoginAt    DateTime?
   investments    Investment[]
   transactions   Transaction[]
   notifications  Notification[]
@@ -104,6 +109,24 @@ model CryptoWallet {
   @@unique([cryptoType, address])
 }
 
+model TradeExecution {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  coinId    String
+  symbol    String
+  action    TradeAction
+  strategy  TradeStrategy
+  status    TradeStatus  @default(EXECUTED)
+  price     Decimal
+  size      Decimal
+  result    Decimal?
+  notes     String?
+  metadata  Json?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
 enum Role {
   USER
   ADMIN
@@ -113,12 +136,30 @@ enum CryptoType {
   BTC
   ETH
   USDT
+  SOL
+  BNB
+  TRX
 }
 
 enum TransactionType {
   DEPOSIT
   WITHDRAWAL
   EARNING
+}
+
+enum TradeAction {
+  BUY
+  SELL
+}
+
+enum TradeStrategy {
+  MANUAL
+  AUTO
+}
+
+enum TradeStatus {
+  EXECUTED
+  CLOSED
 }
 
 enum TransactionStatus {

@@ -13,5 +13,4 @@ build
 coverage
 .nyc_output
 *.log
-src
 test

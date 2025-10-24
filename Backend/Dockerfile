@@ -10,7 +10,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN npm install -g pnpm@latest
 
 # Install dependencies and allow lifecycle scripts (needed for Prisma)
-RUN pnpm install --frozen-lockfile --ignore-scripts=false
+RUN pnpm install --no-frozen-lockfile --ignore-scripts=false
 
 # Copy source code and prisma schema
 COPY . .
@@ -18,8 +18,8 @@ COPY . .
 # Generate Prisma client
 RUN pnpm prisma generate
 
-# Build the application
-RUN pnpm run build
+# Build the application using TypeScript compiler
+RUN pnpm exec tsc -p tsconfig.build.json
 
 # Production stage
 FROM node:18-alpine
@@ -37,11 +37,14 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
 # Install dependencies (keep dev deps so Prisma CLI is available)
-RUN pnpm install --frozen-lockfile --ignore-scripts=false
+RUN pnpm install --no-frozen-lockfile --ignore-scripts=false
 
 # Copy built application and Prisma schema from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+
+# Regenerate Prisma client to ensure engines exist in runtime image
+RUN pnpm exec prisma generate
 
 # Generate Prisma client for the runtime image
 # Note: do NOT run `pnpm prisma generate` in the runtime image because
@@ -53,4 +56,4 @@ COPY --from=builder /app/prisma ./prisma
 EXPOSE 3000
 
 # Run migrations and start the application
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main.js"]
