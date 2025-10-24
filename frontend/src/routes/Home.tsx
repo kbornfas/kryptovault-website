@@ -56,6 +56,12 @@ type RegisteredProfile = {
   password: string;
 };
 
+const DEMO_USER_PROFILE: RegisteredProfile = {
+  fullName: 'Ava Carter',
+  email: 'ava.carter@kryptovault.demo',
+  password: 'TradeSecure123!',
+};
+
 type SimulationPoint = {
   price: number;
   direction: 'buy' | 'sell';
@@ -73,6 +79,37 @@ type TradeExecution = {
   strategy: 'manual' | 'auto';
   notes: string;
   result?: number;
+};
+
+type TradeSummary = {
+  id: string;
+  coinId: string;
+  coinName: string;
+  symbol: string;
+  action: 'buy' | 'sell';
+  strategy: 'manual' | 'auto';
+  price: number;
+  units: number;
+  notional: number;
+  balanceAfter: number;
+  status: 'executed' | 'closed' | 'in-progress';
+  entryTimestamp: string;
+  exitTimestamp?: string;
+  result?: number;
+  notes?: string;
+};
+
+type BalanceLedgerCategory = 'trade-debit' | 'profit' | 'deposit' | 'withdrawal' | 'system';
+
+type BalanceLedgerEntry = {
+  id: string;
+  referenceId: string;
+  description: string;
+  amountChange: number;
+  balanceAfter: number;
+  timestamp: string;
+  strategy: 'manual' | 'auto' | 'system';
+  category: BalanceLedgerCategory;
 };
 
 type ActivePanel = 'market' | 'features' | 'security' | 'deposit' | 'withdraw';
@@ -145,9 +182,38 @@ const formatPercentage = (value: number) => `${value >= 0 ? '+' : ''}${value.toF
 const formatCompact = (value: number) =>
   new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 
-const DEMO_INITIAL_CAPITAL = 10_000;
+const DEMO_INITIAL_CAPITAL = 5_000;
 
 const TRADE_JOURNAL_STORAGE_KEY = 'kv-trade-journal';
+const BALANCE_STORAGE_KEY = 'kv-balance';
+const BALANCE_LEDGER_STORAGE_KEY = 'kv-balance-ledger';
+const MIN_TRADE_BALANCE = 500;
+const MIN_LOT_NOTIONAL = 100;
+const AUTO_PROFIT_TARGET_MULTIPLIER = 3;
+const AUTO_MAX_CYCLES = 12;
+
+const LEDGER_CATEGORY_META: Record<BalanceLedgerCategory, { label: string; badgeClass: string }> = {
+  'trade-debit': {
+    label: 'Lot Debit',
+    badgeClass: 'border-red-500/40 bg-red-500/10 text-red-200',
+  },
+  profit: {
+    label: 'Profit',
+    badgeClass: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
+  },
+  deposit: {
+    label: 'Deposit',
+    badgeClass: 'border-blue-500/40 bg-blue-500/10 text-blue-200',
+  },
+  withdrawal: {
+    label: 'Withdrawal',
+    badgeClass: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+  },
+  system: {
+    label: 'System',
+    badgeClass: 'border-slate-500/40 bg-slate-500/10 text-slate-200',
+  },
+};
 
 const DEPOSIT_ADDRESSES = {
   usdt: 'TVKQpGsENufZDfB1ipVVjzt7KvXzhRez43',
@@ -155,14 +221,14 @@ const DEPOSIT_ADDRESSES = {
   eth: '0xE8cc2526380dE929596B9267304B89A25fc98A36',
   sol: 'GAU9RczYqHz6eJWgTRApGPoWFk7krEEeZjjZJH3dUHdG',
   card: 'Secure Card Checkout → https://pay.kryptovault.com/checkout',
-  wire: 'Beneficiary: KryptoVault Holdings LLC | Bank: Silvergate Bank | Account: 987654321 | SWIFT: SIGLUS44 | Reference: Your Vault ID',
+  // 'wire' removed per product preference
 } as const;
 
 const DEMO_WALLET_ADDRESS = DEPOSIT_ADDRESSES.usdt;
 
 type DepositAssetKey = keyof typeof DEPOSIT_ADDRESSES;
 
-const DEPOSIT_ORDER: DepositAssetKey[] = ['usdt', 'btc', 'eth', 'sol', 'card', 'wire'];
+const DEPOSIT_ORDER: DepositAssetKey[] = ['usdt', 'btc', 'eth', 'sol', 'card'];
 
 const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string; description: string; note: string }> = {
   usdt: {
@@ -195,19 +261,40 @@ const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string
     description: 'Top up instantly with your credit or debit card via our PCI-DSS compliant processor.',
     note: '3-D Secure required. Funds appear in your vault immediately after authorization.',
   },
-  wire: {
-    label: 'Bank Wire Transfer',
-    network: 'SWIFT • SEPA',
-    description: 'Ideal for high-value deposits through traditional banking rails with treasury monitoring.',
-    note: 'Include your Vault ID in the payment reference for expedited crediting.',
-  },
+  // wire option removed
 };
+
+const TRADE_CURRENCY_CHOICES: Array<{ id: CryptoTab; label: string; symbol: string; description: string }> = [
+  {
+    id: 'bitcoin',
+    label: 'Bitcoin',
+    symbol: 'BTC',
+    description: 'Deepest liquidity pool with institutional routing for macro positioning.',
+  },
+  {
+    id: 'ethereum',
+    label: 'Ethereum',
+    symbol: 'ETH',
+    description: 'Smart-contract powerhouse engineered for adaptive hedging and staking.',
+  },
+  {
+    id: 'solana',
+    label: 'Solana',
+    symbol: 'SOL',
+    description: 'High-velocity network ideal for rapid-fire momentum executions.',
+  },
+];
 
 type WithdrawalMethod = DepositAssetKey;
 
 type WithdrawalFormState = {
   amount: string;
   destination: string;
+};
+
+type DepositFormState = {
+  amount: string;
+  memo: string;
 };
 
 const WITHDRAWAL_OPTIONS: Record<WithdrawalMethod, { label: string; description: string; placeholder: string }> = {
@@ -236,11 +323,7 @@ const WITHDRAWAL_OPTIONS: Record<WithdrawalMethod, { label: string; description:
     description: 'Send profits back to the card used for funding with instant settlement.',
     placeholder: 'Enter card issuer, name on card, and last 4 digits',
   },
-  wire: {
-    label: 'Bank Wire',
-    description: 'Traditional banking rails for corporate treasury or high-limit withdrawals.',
-    placeholder: 'Bank name, account number / IBAN, SWIFT or routing code',
-  },
+  // wire removed
 };
 
 const securityHighlights = [
@@ -374,11 +457,23 @@ const CryptoInvestmentPlatform = () => {
   const [selectedCoin, setSelectedCoin] = useState<MarketCoin | null>(null);
   const [pendingAction, setPendingAction] = useState<'buy' | 'sell' | 'auto' | 'view' | null>(null);
   const [copiedAsset, setCopiedAsset] = useState<DepositAssetKey | null>(null);
+  const [depositForm, setDepositForm] = useState<DepositFormState>({ amount: '', memo: '' });
+  const [depositFeedback, setDepositFeedback] = useState<string | null>(null);
   const [tradeJournal, setTradeJournal] = useState<TradeExecution[]>([]);
   const [tradeFeedback, setTradeFeedback] = useState<string | null>(null);
+  const [showTradeSelector, setShowTradeSelector] = useState(false);
+  const [tradeCurrency, setTradeCurrency] = useState<CryptoTab>('bitcoin');
   const [selectedWithdrawalMethod, setSelectedWithdrawalMethod] = useState<WithdrawalMethod>('usdt');
   const [withdrawForm, setWithdrawForm] = useState<WithdrawalFormState>({ amount: '', destination: '' });
   const [withdrawFeedback, setWithdrawFeedback] = useState<string | null>(null);
+  const [userBalance, setUserBalance] = useState<number>(DEMO_INITIAL_CAPITAL);
+  const [tradeIntent, setTradeIntent] = useState<{ coin: MarketCoin; action: 'buy' | 'sell' } | null>(null);
+  const [tradeLotSize, setTradeLotSize] = useState('');
+  const [tradeIntentError, setTradeIntentError] = useState<string | null>(null);
+  const [tradeSummary, setTradeSummary] = useState<TradeSummary | null>(null);
+  const [showTradeSummary, setShowTradeSummary] = useState(false);
+  const [balanceLedger, setBalanceLedger] = useState<BalanceLedgerEntry[]>([]);
+  const [showBalanceHistory, setShowBalanceHistory] = useState(false);
 
   const demoProfitRate = useMemo(() => 0.85 + Math.random() * 0.1, []);
   const demoProfit = Math.round(DEMO_INITIAL_CAPITAL * demoProfitRate * 100) / 100;
@@ -386,30 +481,28 @@ const CryptoInvestmentPlatform = () => {
   const profitPercent = Math.round(demoProfitRate * 100);
 
   const simulationSeries = useMemo(() => {
-    const steps = 60;
-    const baseValue = 1;
-    const trajectory: { value: number; direction: 'buy' | 'sell' }[] = [{ value: baseValue, direction: 'buy' }];
-    let current = baseValue;
+    const totalPoints = 180;
+    const points: SimulationPoint[] = [{ price: DEMO_INITIAL_CAPITAL, direction: 'buy' }];
+    let price = DEMO_INITIAL_CAPITAL;
 
-    for (let index = 1; index < steps; index += 1) {
-      const sellPhase = index % 5 === 2 || index % 5 === 4;
-      const direction: 'buy' | 'sell' = sellPhase ? 'sell' : 'buy';
-      const drift = sellPhase ? -0.12 : 0.22;
-      const wave = Math.sin(index / 2.6) * 0.1;
-      current += drift + wave;
-      trajectory.push({ value: current, direction });
+    for (let index = 1; index < totalPoints; index += 1) {
+      const remaining = Math.max(totalPoints - index, 1);
+      const directionalPull = (demoTotal - price) / remaining / Math.max(price, 1);
+      const cyclicalNoise = Math.sin(index / 9) * 0.004 + Math.sin(index / 21) * 0.0025;
+      const randomShock = (Math.random() - 0.5) * (0.012 + Math.random() * 0.006);
+      const changeRatio = directionalPull + cyclicalNoise + randomShock;
+
+      price = price * (1 + changeRatio);
+      price = Math.max(DEMO_INITIAL_CAPITAL * 0.6, price);
+      const direction: 'buy' | 'sell' = changeRatio >= 0 ? 'buy' : 'sell';
+      points.push({ price: Number(price.toFixed(2)), direction });
     }
 
-    const rawValues = trajectory.map((point) => point.value);
-    const minRaw = Math.min(...rawValues);
-    const maxRaw = Math.max(...rawValues);
-    const spread = maxRaw - minRaw || 1;
+    if (points.length) {
+      points[points.length - 1] = { price: Number(demoTotal.toFixed(2)), direction: 'buy' };
+    }
 
-    return trajectory.map((point, index) => {
-      const normalized = (point.value - minRaw) / spread;
-      const price = index === trajectory.length - 1 ? demoTotal : DEMO_INITIAL_CAPITAL + normalized * (demoTotal - DEMO_INITIAL_CAPITAL);
-      return { price, direction: index === 0 ? 'buy' : point.direction };
-    });
+    return points;
   }, [demoTotal]);
 
   const chartPrices = useMemo(() => simulationSeries.map((point) => point.price), [simulationSeries]);
@@ -418,17 +511,6 @@ const CryptoInvestmentPlatform = () => {
   const liveProfit = Math.max(0, currentSimulationPrice - DEMO_INITIAL_CAPITAL);
   const liveProfitPercent = Math.round((liveProfit / DEMO_INITIAL_CAPITAL) * 100);
 
-  const handleOpenWindow = useCallback((anchor: string) => {
-    setMobileMenuOpen(false);
-    if (typeof window === 'undefined') {
-      return;
-    }
-    const element = document.getElementById(anchor);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, []);
-
   const handleOpenPanel = useCallback(
     (panel: ActivePanel, options?: { presetWithdrawalMethod?: WithdrawalMethod; presetAmount?: string }) => {
       setActivePanel(panel);
@@ -436,6 +518,8 @@ const CryptoInvestmentPlatform = () => {
       if (panel === 'deposit') {
         setSelectedDepositAsset('usdt');
         setCopiedAsset(null);
+        setDepositForm({ amount: '', memo: '' });
+        setDepositFeedback(null);
       }
       if (panel === 'withdraw') {
         setSelectedWithdrawalMethod(options?.presetWithdrawalMethod ?? 'usdt');
@@ -449,6 +533,8 @@ const CryptoInvestmentPlatform = () => {
   const handleClosePanel = useCallback(() => {
     setActivePanel(null);
     setWithdrawFeedback(null);
+    setDepositFeedback(null);
+    setDepositForm({ amount: '', memo: '' });
   }, []);
 
   const handleCoinQuickView = useCallback((coin: MarketCoin, action: 'buy' | 'sell' | 'auto' | null = null) => {
@@ -456,6 +542,18 @@ const CryptoInvestmentPlatform = () => {
     setPendingAction(action ?? 'view');
     setActivePanel(null);
     setMobileMenuOpen(false);
+  }, []);
+
+  const openTradeSelector = useCallback(() => {
+    setActivePanel(null);
+    setSelectedCoin(null);
+    setPendingAction(null);
+    setTradeCurrency(activeTab);
+    setShowTradeSelector(true);
+  }, [activeTab]);
+
+  const closeTradeSelector = useCallback(() => {
+    setShowTradeSelector(false);
   }, []);
 
   const handleCopyAddress = useCallback(async (asset: DepositAssetKey) => {
@@ -502,6 +600,24 @@ const CryptoInvestmentPlatform = () => {
       }),
     );
   }, []);
+
+  const persistBalance = useCallback(
+    (input: number | ((previous: number) => number)) => {
+      let computed = 0;
+      setUserBalance((previous) => {
+        const evaluated = typeof input === 'function' ? (input as (prev: number) => number)(previous) : input;
+        const sanitized = Number.isFinite(evaluated) ? evaluated : 0;
+        const rounded = Number(sanitized.toFixed(2));
+        computed = rounded;
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(BALANCE_STORAGE_KEY, rounded.toFixed(2));
+        }
+        return rounded;
+      });
+      return computed;
+    },
+    [],
+  );
 
   const handleOpenSignInFlow = useCallback(() => {
     setMobileMenuOpen(false);
@@ -614,6 +730,10 @@ const CryptoInvestmentPlatform = () => {
     setSignInMessage('');
     setSignInForm({ email: registeredProfile?.email ?? '', password: '' });
     persistAuth(registeredProfile ?? null, false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(BALANCE_STORAGE_KEY);
+    }
+    setUserBalance(DEMO_INITIAL_CAPITAL);
   }, [persistAuth, registeredProfile]);
 
   const findCoinById = useCallback(
@@ -631,6 +751,21 @@ const CryptoInvestmentPlatform = () => {
     [cryptoData, marketCoins],
   );
 
+  const selectedTradeCoin = useMemo(() => {
+    const found = findCoinById(tradeCurrency);
+    if (found) {
+      return found;
+    }
+    return createFallbackCoin(tradeCurrency, cryptoData[tradeCurrency]);
+  }, [cryptoData, findCoinById, tradeCurrency]);
+
+  const tradeCatalog = useMemo(() => {
+    if (marketCoins.length) {
+      return marketCoins.slice(0, 18);
+    }
+    return (['bitcoin', 'ethereum', 'solana'] as CryptoTab[]).map((coinId) => createFallbackCoin(coinId, cryptoData[coinId]));
+  }, [cryptoData, marketCoins]);
+
   const generateTradeId = useCallback(
     () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     [],
@@ -640,93 +775,257 @@ const CryptoInvestmentPlatform = () => {
     setTradeJournal((previous) => [entry, ...previous].slice(0, 25));
   }, []);
 
-  const executeManualTrade = useCallback(
-    (coin: MarketCoin, action: 'buy' | 'sell') => {
-      const size = Number((Math.random() * 1.25 + 0.35).toFixed(2));
-      const slipFactor = action === 'buy' ? 1 + Math.random() * 0.0009 : 1 - Math.random() * 0.0009;
-      const filledPrice = Number((coin.current_price * slipFactor).toFixed(2));
-      const resultValue =
-        action === 'sell'
-          ? Number((filledPrice * size * (0.02 + Math.random() * 0.06)).toFixed(2))
-          : undefined;
-
-      pushTradeToJournal({
-        id: `manual-${generateTradeId()}`,
-        coinId: coin.id,
-        symbol: coin.symbol.toUpperCase(),
-        action,
-        price: filledPrice,
-        size,
-        status: action === 'sell' ? 'closed' : 'executed',
+  const recordBalanceEntry = useCallback(
+    (details: { referenceId: string; description: string; amountChange: number; balanceAfter: number; strategy: BalanceLedgerEntry['strategy']; category?: BalanceLedgerCategory }) => {
+      const normalizedChange = Number(details.amountChange.toFixed(2));
+      const normalizedBalance = Number(details.balanceAfter.toFixed(2));
+      const category: BalanceLedgerCategory = details.category ?? (normalizedChange >= 0 ? 'profit' : 'trade-debit');
+      const entry: BalanceLedgerEntry = {
+        id: `ledger-${generateTradeId()}`,
+        referenceId: details.referenceId,
+        description: details.description,
+        amountChange: normalizedChange,
+        balanceAfter: normalizedBalance,
         timestamp: new Date().toISOString(),
-        strategy: 'manual',
-        notes:
-          action === 'buy'
-            ? 'Long exposure initiated with precision routing.'
-            : 'Position closed and routed to your withdrawal hub.',
-        result: resultValue,
-      });
-
-      setTradeFeedback(
-        action === 'buy'
-          ? `Buy order filled for ${coin.symbol.toUpperCase()} • ${size.toFixed(2)} units secured at ${formatCurrency(
-              filledPrice,
-            )}.`
-          : `Sell order executed for ${coin.symbol.toUpperCase()} • ${
-              resultValue ? formatCurrency(resultValue) : 'Profits'
-            } prepared for withdrawal.`,
-      );
+        strategy: details.strategy,
+        category,
+      };
+      setBalanceLedger((previous) => [entry, ...previous].slice(0, 100));
     },
-    [generateTradeId, pushTradeToJournal],
+    [generateTradeId],
   );
+
+  const openTradeSummary = useCallback((summary: TradeSummary) => {
+    setTradeSummary(summary);
+    setShowTradeSummary(true);
+  }, []);
+
+  const closeTradeSummary = useCallback(() => {
+    setShowTradeSummary(false);
+  }, []);
+
+  const handleOpenBalanceHistory = useCallback(() => {
+    setShowBalanceHistory(true);
+  }, []);
+
+  const handleCloseBalanceHistory = useCallback(() => {
+    setShowBalanceHistory(false);
+  }, []);
+
+  const tradeSummaryLedger = useMemo(() => {
+    if (!tradeSummary) {
+      return [] as BalanceLedgerEntry[];
+    }
+    const baseReference = tradeSummary.id.endsWith('-close')
+      ? tradeSummary.id.replace(/-close$/, '')
+      : tradeSummary.id;
+    return balanceLedger.filter(
+      (entry) => entry.referenceId === baseReference || entry.referenceId === `${baseReference}-close`,
+    );
+  }, [balanceLedger, tradeSummary]);
+
+  const tradeSummaryJournalEntries = useMemo(() => {
+    if (!tradeSummary) {
+      return [] as TradeExecution[];
+    }
+    const baseReference = tradeSummary.id.endsWith('-close')
+      ? tradeSummary.id.replace(/-close$/, '')
+      : tradeSummary.id;
+    return tradeJournal.filter(
+      (entry) => entry.id === baseReference || entry.id === `${baseReference}-close`,
+    );
+  }, [tradeJournal, tradeSummary]);
 
   const startAutoPilotCycle = useCallback(
     (coin: MarketCoin) => {
-      const size = Number((Math.random() * 1.8 + 0.6).toFixed(2));
-      const entryPrice = Number((coin.current_price * (1 + (Math.random() - 0.5) * 0.001)).toFixed(2));
-      const tradeId = `auto-${generateTradeId()}`;
+      let workingBalance = Number(userBalance.toFixed(2));
+      if (workingBalance <= MIN_TRADE_BALANCE) {
+        setTradeFeedback('Auto trading requires a balance above $500. Deposit funds to deploy the robot.');
+        return;
+      }
 
-      pushTradeToJournal({
-        id: tradeId,
-        coinId: coin.id,
-        symbol: coin.symbol.toUpperCase(),
-        action: 'buy',
-        price: entryPrice,
-        size,
-        status: 'executed',
-        timestamp: new Date().toISOString(),
-        strategy: 'auto',
-        notes: 'Auto pilot engaged after structural scan.',
-      });
+      const baseAllocation = Math.max(MIN_LOT_NOTIONAL, workingBalance * 0.2);
+      const cappedAllocation = Math.min(baseAllocation, workingBalance - MIN_LOT_NOTIONAL / 2);
+      const allocation = Number(cappedAllocation.toFixed(2));
 
-      setTradeFeedback(`Auto robot engaged • monitoring ${coin.symbol.toUpperCase()} for structure shifts.`);
+      if (!Number.isFinite(allocation) || allocation < MIN_LOT_NOTIONAL || allocation >= workingBalance) {
+        setTradeFeedback('Insufficient balance to allocate funds for auto trading. Deposit additional capital.');
+        return;
+      }
 
-      const exitDelay = 3500 + Math.floor(Math.random() * 4500);
-      const timerId = window.setTimeout(() => {
-        const exitPrice = Number((entryPrice * (1 + 0.01 + Math.random() * 0.02)).toFixed(2));
-        const resultValue = Number(((exitPrice - entryPrice) * size).toFixed(2));
+      const targetProfit = Number((allocation * AUTO_PROFIT_TARGET_MULTIPLIER).toFixed(2));
+      const sessionId = `auto-${generateTradeId()}`;
+      let accumulatedProfit = 0;
+      let cycleIndex = 0;
+      let halted = false;
 
-        pushTradeToJournal({
-          id: `${tradeId}-close`,
-          coinId: coin.id,
-          symbol: coin.symbol.toUpperCase(),
-          action: 'sell',
-          price: exitPrice,
-          size,
-          status: 'closed',
-          timestamp: new Date().toISOString(),
+      setTradeFeedback(
+        `Auto strategy armed on ${coin.symbol.toUpperCase()} • Target profit ${formatCurrency(targetProfit)} (${AUTO_PROFIT_TARGET_MULTIPLIER * 100}% of allocation).`,
+      );
+
+      const executeCycle = () => {
+        if (halted) {
+          return;
+        }
+
+        if (workingBalance <= MIN_TRADE_BALANCE || workingBalance <= allocation) {
+          halted = true;
+          setTradeFeedback('Vault balance below the auto-trading threshold. Automation halted.');
+          return;
+        }
+
+        const entryPrice = Number((coin.current_price * (1 + (Math.random() - 0.5) * 0.0015)).toFixed(2));
+        const size = Number((allocation / entryPrice).toFixed(4));
+        if (size <= 0) {
+          halted = true;
+          setTradeFeedback('Unable to allocate a valid position size for auto trading.');
+          return;
+        }
+
+        cycleIndex += 1;
+        const tradeId = `${sessionId}-cycle-${cycleIndex}`;
+        const entryTimestamp = new Date().toISOString();
+
+        workingBalance = persistBalance((previous) => Math.max(0, previous - allocation));
+
+        recordBalanceEntry({
+          referenceId: tradeId,
+          description: `Auto BUY ${coin.symbol.toUpperCase()} allocation`,
+          amountChange: -allocation,
+          balanceAfter: workingBalance,
           strategy: 'auto',
-          notes: 'Auto cycle exited—structure shift detected.',
-          result: resultValue,
+          category: 'trade-debit',
         });
 
-        setTradeFeedback(`Auto cycle closed on ${coin.symbol.toUpperCase()} • Realized ${formatCurrency(resultValue)}.`);
-        autoExecutionTimers.current = autoExecutionTimers.current.filter((stored) => stored !== timerId);
-      }, exitDelay);
+        const entryNotes = `Auto pilot cycle ${cycleIndex} deployed. Allocation ${formatCurrency(allocation)} committed.`;
+        pushTradeToJournal({
+          id: tradeId,
+          coinId: coin.id,
+          symbol: coin.symbol.toUpperCase(),
+          action: 'buy',
+          price: entryPrice,
+          size,
+          status: 'executed',
+          timestamp: entryTimestamp,
+          strategy: 'auto',
+          notes: entryNotes,
+        });
 
-      autoExecutionTimers.current.push(timerId);
+        openTradeSummary({
+          id: tradeId,
+          coinId: coin.id,
+          coinName: coin.name,
+          symbol: coin.symbol.toUpperCase(),
+          action: 'buy',
+          strategy: 'auto',
+          price: entryPrice,
+          units: size,
+          notional: allocation,
+          balanceAfter: workingBalance,
+          status: 'in-progress',
+          entryTimestamp,
+          notes: entryNotes,
+        });
+
+        const progressPercent = Math.min(100, Math.max(0, (Math.max(accumulatedProfit, 0) / Math.max(targetProfit, 1)) * 100));
+        setTradeFeedback(
+          `Auto cycle ${cycleIndex} opened on ${coin.symbol.toUpperCase()} • Target ${formatCurrency(targetProfit)} • Progress ${progressPercent.toFixed(0)}%.`,
+        );
+
+        const exitDelay = 3200 + Math.floor(Math.random() * 4200);
+        const timerId = window.setTimeout(() => {
+          if (halted) {
+            autoExecutionTimers.current = autoExecutionTimers.current.filter((stored) => stored !== timerId);
+            return;
+          }
+
+          const driftBoost = 0.01 + Math.random() * 0.02;
+          const exitPrice = Number((entryPrice * (1 + driftBoost)).toFixed(2));
+          const exitValue = Number((size * exitPrice).toFixed(2));
+          const resultValue = Number((exitValue - allocation).toFixed(2));
+          const exitTimestamp = new Date().toISOString();
+
+          workingBalance = persistBalance((previous) => previous + exitValue);
+
+          recordBalanceEntry({
+            referenceId: `${tradeId}-close`,
+            description: `Auto SELL ${coin.symbol.toUpperCase()} proceeds`,
+            amountChange: exitValue,
+            balanceAfter: workingBalance,
+            strategy: 'auto',
+            category: 'profit',
+          });
+
+          pushTradeToJournal({
+            id: `${tradeId}-close`,
+            coinId: coin.id,
+            symbol: coin.symbol.toUpperCase(),
+            action: 'sell',
+            price: exitPrice,
+            size,
+            status: 'closed',
+            timestamp: exitTimestamp,
+            strategy: 'auto',
+            notes: 'Auto cycle exited—structure shift detected.',
+            result: resultValue,
+          });
+
+          accumulatedProfit = Number((accumulatedProfit + resultValue).toFixed(2));
+          const positiveProgress = Math.max(accumulatedProfit, 0);
+          const progressRatio = Math.min(1, positiveProgress / Math.max(targetProfit, 1));
+          const progressPercentExit = Math.round(progressRatio * 100);
+
+          openTradeSummary({
+            id: `${tradeId}-close`,
+            coinId: coin.id,
+            coinName: coin.name,
+            symbol: coin.symbol.toUpperCase(),
+            action: 'sell',
+            strategy: 'auto',
+            price: exitPrice,
+            units: size,
+            notional: exitValue,
+            balanceAfter: workingBalance,
+            status: accumulatedProfit >= targetProfit ? 'closed' : 'executed',
+            entryTimestamp,
+            exitTimestamp,
+            result: resultValue,
+            notes: 'Auto cycle exited—structure shift detected.',
+          });
+
+          autoExecutionTimers.current = autoExecutionTimers.current.filter((stored) => stored !== timerId);
+
+          if (accumulatedProfit >= targetProfit) {
+            halted = true;
+            setTradeFeedback(`Auto target reached • ${formatCurrency(accumulatedProfit)} realized across ${cycleIndex} cycle(s).`);
+            return;
+          }
+
+          if (cycleIndex >= AUTO_MAX_CYCLES) {
+            halted = true;
+            setTradeFeedback(`Auto trading paused after ${AUTO_MAX_CYCLES} cycle(s). Realized ${formatCurrency(accumulatedProfit)}.`);
+            return;
+          }
+
+          if (workingBalance <= MIN_TRADE_BALANCE || workingBalance <= allocation) {
+            halted = true;
+            setTradeFeedback('Vault balance now below auto-trading threshold. Automation halted.');
+            return;
+          }
+
+          setTradeFeedback(
+            `Auto cycle ${cycleIndex} closed on ${coin.symbol.toUpperCase()} • P/L ${formatCurrency(resultValue)} • Progress ${progressPercentExit}% of ${formatCurrency(targetProfit)} target.`,
+          );
+
+          executeCycle();
+        }, exitDelay);
+
+        autoExecutionTimers.current.push(timerId);
+      };
+
+      executeCycle();
     },
-    [generateTradeId, pushTradeToJournal],
+    [generateTradeId, openTradeSummary, persistBalance, pushTradeToJournal, recordBalanceEntry, userBalance],
   );
 
   const handleWithdrawalSubmit = useCallback(
@@ -790,36 +1089,154 @@ const CryptoInvestmentPlatform = () => {
         return;
       }
 
+      if (action === 'buy' && userBalance <= MIN_TRADE_BALANCE) {
+        setTradeFeedback('Balance below the $500 trading threshold. Deposit more funds to place buy orders.');
+        return;
+      }
+
       if (action === 'auto') {
         startAutoPilotCycle(coin);
         return;
       }
 
-      executeManualTrade(coin, action);
+      setTradeIntent({ coin, action });
+      setTradeLotSize('');
+      setTradeIntentError(null);
+    },
+    [handleOpenSignInFlow, isAuthenticated, setSignInMessage, startAutoPilotCycle, userBalance],
+  );
 
-      if (action === 'buy') {
-        const depositAsset = resolveDepositAsset(coin);
-        setSelectedDepositAsset(depositAsset);
-        handleOpenPanel('deposit');
+  const handleTradeSelection = useCallback(
+    (action: 'buy' | 'sell' | 'auto') => {
+      handleStrategyAction(action, selectedTradeCoin);
+      closeTradeSelector();
+    },
+    [closeTradeSelector, handleStrategyAction, selectedTradeCoin],
+  );
+
+  const handleCatalogExecution = useCallback(
+    (coin: MarketCoin, action: 'buy' | 'sell' | 'auto') => {
+      handleStrategyAction(action, coin);
+      closeTradeSelector();
+    },
+    [closeTradeSelector, handleStrategyAction],
+  );
+
+  const handleCancelManualTrade = useCallback(() => {
+    setTradeIntent(null);
+    setTradeLotSize('');
+    setTradeIntentError(null);
+  }, []);
+
+  const handleConfirmManualTrade = useCallback(() => {
+    if (!tradeIntent) {
+      return;
+    }
+
+    const sanitizedInput = tradeLotSize.replace(/[^0-9.]/g, '');
+    const parsedLot = Number.parseFloat(sanitizedInput);
+
+    if (Number.isNaN(parsedLot) || parsedLot < MIN_LOT_NOTIONAL) {
+      setTradeIntentError(`Minimum lot size is ${formatCurrency(MIN_LOT_NOTIONAL)}.`);
+      return;
+    }
+
+    const { coin, action } = tradeIntent;
+    const lotValue = Number(parsedLot.toFixed(2));
+    const slipFactor = action === 'buy' ? 1 + Math.random() * 0.0009 : 1 - Math.random() * 0.0009;
+    const filledPrice = Number((coin.current_price * slipFactor).toFixed(2));
+    const executedUnits = Number((lotValue / filledPrice).toFixed(4));
+    const tradeId = `manual-${generateTradeId()}`;
+    const timestamp = new Date().toISOString();
+    const notes =
+      action === 'buy'
+        ? 'Lot allocated using available vault balance.'
+        : 'Proceeds returned to vault balance after execution.';
+
+    if (action === 'buy') {
+      if (userBalance <= MIN_TRADE_BALANCE) {
+        setTradeIntentError(`A minimum balance of ${formatCurrency(MIN_TRADE_BALANCE)} is required to open new positions.`);
+        setTradeFeedback('Balance below trading minimum. Deposit additional funds to execute buy orders.');
         return;
       }
+      if (lotValue > userBalance) {
+        setTradeIntentError('Insufficient funds. Please deposit additional capital before trading.');
+        setTradeFeedback('Insufficient funds detected. Deposit more capital to execute your next trade.');
+        return;
+      }
+    }
 
-      const withdrawalAsset = resolveDepositAsset(coin) as WithdrawalMethod;
-      const estimatedAmount = Math.max(500, coin.current_price * 0.18);
-      handleOpenPanel('withdraw', {
-        presetWithdrawalMethod: withdrawalAsset,
-        presetAmount: estimatedAmount.toFixed(2),
-      });
-    },
-    [
-      executeManualTrade,
-      handleOpenPanel,
-      handleOpenSignInFlow,
-      isAuthenticated,
-      setSignInMessage,
-      startAutoPilotCycle,
-    ],
-  );
+    const updatedBalance = persistBalance((previous) => {
+      if (action === 'buy') {
+        const debited = Math.max(0, previous - lotValue);
+        return debited;
+      }
+      return previous + lotValue;
+    });
+
+    recordBalanceEntry({
+      referenceId: tradeId,
+      description: `${action === 'buy' ? 'Manual BUY' : 'Manual SELL'} ${coin.symbol.toUpperCase()}`,
+      amountChange: action === 'buy' ? -lotValue : lotValue,
+      balanceAfter: updatedBalance,
+      strategy: 'manual',
+      category: action === 'buy' ? 'trade-debit' : 'profit',
+    });
+
+    pushTradeToJournal({
+      id: tradeId,
+      coinId: coin.id,
+      symbol: coin.symbol.toUpperCase(),
+      action,
+      price: filledPrice,
+      size: executedUnits,
+      status: action === 'sell' ? 'closed' : 'executed',
+      timestamp,
+      strategy: 'manual',
+      notes,
+      result: action === 'sell' ? lotValue : undefined,
+    });
+
+    setTradeFeedback(
+      action === 'buy'
+        ? `Buy order filled for ${coin.symbol.toUpperCase()} • ${executedUnits.toFixed(4)} units at ${formatCurrency(filledPrice)}. ${formatCurrency(
+            lotValue,
+          )} debited. New balance ${formatCurrency(updatedBalance)}.`
+        : `Sell order executed for ${coin.symbol.toUpperCase()} • ${formatCurrency(lotValue)} credited. New balance ${formatCurrency(
+            updatedBalance,
+          )}.`,
+    );
+
+    handleCancelManualTrade();
+
+    openTradeSummary({
+      id: tradeId,
+      coinId: coin.id,
+      coinName: coin.name,
+      symbol: coin.symbol.toUpperCase(),
+      action,
+      strategy: 'manual',
+      price: filledPrice,
+      units: executedUnits,
+      notional: lotValue,
+      balanceAfter: updatedBalance,
+      status: action === 'sell' ? 'closed' : 'executed',
+      entryTimestamp: timestamp,
+      exitTimestamp: action === 'sell' ? timestamp : undefined,
+      result: action === 'sell' ? lotValue : undefined,
+      notes,
+    });
+  }, [
+    generateTradeId,
+    handleCancelManualTrade,
+    openTradeSummary,
+    persistBalance,
+    pushTradeToJournal,
+    recordBalanceEntry,
+    tradeIntent,
+    tradeLotSize,
+    userBalance,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -848,26 +1265,88 @@ const CryptoInvestmentPlatform = () => {
     }
     try {
       const stored = window.localStorage.getItem('kv-auth');
-      if (!stored) {
+      if (stored) {
+        const parsed = JSON.parse(stored) as { profile?: RegisteredProfile | null; authenticated?: boolean };
+        if (parsed?.profile) {
+          setRegisteredProfile(parsed.profile);
+          setSignupForm({
+            fullName: parsed.profile.fullName,
+            email: parsed.profile.email,
+            password: parsed.profile.password,
+            confirmPassword: parsed.profile.password,
+          });
+          setSignInForm({ email: parsed.profile.email, password: '' });
+        }
+        setIsAuthenticated(Boolean(parsed?.authenticated));
+
+        const storedBalance = window.localStorage.getItem(BALANCE_STORAGE_KEY);
+        if (storedBalance) {
+          const parsedBalance = Number.parseFloat(storedBalance);
+          if (!Number.isNaN(parsedBalance)) {
+            setUserBalance(Number(parsedBalance.toFixed(2)));
+          }
+        } else {
+          persistBalance(DEMO_INITIAL_CAPITAL);
+        }
+
+        const ledgerRaw = window.localStorage.getItem(BALANCE_LEDGER_STORAGE_KEY);
+        if (ledgerRaw) {
+          try {
+            const parsedLedger = JSON.parse(ledgerRaw);
+            if (Array.isArray(parsedLedger)) {
+              setBalanceLedger(parsedLedger.slice(0, 100));
+            }
+          } catch (error) {
+            console.warn('Unable to restore balance ledger.', error);
+            window.localStorage.removeItem(BALANCE_LEDGER_STORAGE_KEY);
+          }
+        } else {
+          const initialEntry: BalanceLedgerEntry = {
+            id: `ledger-${generateTradeId()}`,
+            referenceId: 'init-balance',
+            description: 'Initial vault balance deployed',
+            amountChange: DEMO_INITIAL_CAPITAL,
+            balanceAfter: DEMO_INITIAL_CAPITAL,
+            timestamp: new Date().toISOString(),
+            strategy: 'system',
+            category: 'system',
+          };
+          setBalanceLedger([initialEntry]);
+          window.localStorage.setItem(BALANCE_LEDGER_STORAGE_KEY, JSON.stringify([initialEntry]));
+        }
         return;
       }
-      const parsed = JSON.parse(stored) as { profile?: RegisteredProfile | null; authenticated?: boolean };
-      if (parsed?.profile) {
-        setRegisteredProfile(parsed.profile);
-        setSignupForm({
-          fullName: parsed.profile.fullName,
-          email: parsed.profile.email,
-          password: parsed.profile.password,
-          confirmPassword: parsed.profile.password,
-        });
-        setSignInForm({ email: parsed.profile.email, password: '' });
-      }
-      setIsAuthenticated(Boolean(parsed?.authenticated));
+
+      setRegisteredProfile(DEMO_USER_PROFILE);
+      setSignupForm({
+        fullName: DEMO_USER_PROFILE.fullName,
+        email: DEMO_USER_PROFILE.email,
+        password: DEMO_USER_PROFILE.password,
+        confirmPassword: DEMO_USER_PROFILE.password,
+      });
+      setSignInForm({ email: DEMO_USER_PROFILE.email, password: '' });
+      setIsAuthenticated(true);
+      persistAuth(DEMO_USER_PROFILE, true);
+      persistBalance(DEMO_INITIAL_CAPITAL);
+      const initialEntry: BalanceLedgerEntry = {
+        id: `ledger-${generateTradeId()}`,
+        referenceId: 'init-balance',
+        description: 'Initial vault balance deployed',
+        amountChange: DEMO_INITIAL_CAPITAL,
+        balanceAfter: DEMO_INITIAL_CAPITAL,
+        timestamp: new Date().toISOString(),
+        strategy: 'system',
+        category: 'system',
+      };
+      setBalanceLedger([initialEntry]);
+      window.localStorage.setItem(BALANCE_LEDGER_STORAGE_KEY, JSON.stringify([initialEntry]));
     } catch (error) {
       console.warn('Unable to restore saved session.', error);
       window.localStorage.removeItem('kv-auth');
+      window.localStorage.removeItem(BALANCE_STORAGE_KEY);
+      window.localStorage.removeItem(BALANCE_LEDGER_STORAGE_KEY);
     }
-  }, []);
+  }, [generateTradeId, persistAuth, persistBalance]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -898,6 +1377,17 @@ const CryptoInvestmentPlatform = () => {
       console.warn('Unable to persist trade journal.', error);
     }
   }, [tradeJournal]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(BALANCE_LEDGER_STORAGE_KEY, JSON.stringify(balanceLedger));
+    } catch (error) {
+      console.warn('Unable to persist balance ledger.', error);
+    }
+  }, [balanceLedger]);
 
   useEffect(() => {
     if (!showSimulation) {
@@ -1222,7 +1712,7 @@ const CryptoInvestmentPlatform = () => {
               <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenPanel('features')}>
                 Features
               </button>
-              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenWindow('about')}>
+              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleNavigate('/about')}>
                 About
               </button>
               <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenPanel('security')}>
@@ -1230,6 +1720,14 @@ const CryptoInvestmentPlatform = () => {
               </button>
               {isAuthenticated ? (
                 <>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
+                    onClick={handleOpenBalanceHistory}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    {formatCurrency(userBalance)}
+                  </button>
                   <button
                     type="button"
                     className="px-4 py-2 border border-emerald-500 rounded-lg hover:bg-emerald-500/10 transition"
@@ -1247,7 +1745,7 @@ const CryptoInvestmentPlatform = () => {
                   <button
                     type="button"
                     className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition"
-                    onClick={() => handleOpenWindow('auto-trade')}
+                    onClick={openTradeSelector}
                   >
                     Trade
                   </button>
@@ -1295,7 +1793,7 @@ const CryptoInvestmentPlatform = () => {
               <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenPanel('features')}>
                 Features
               </button>
-              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenWindow('about')}>
+              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleNavigate('/about')}>
                 About
               </button>
               <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenPanel('security')}>
@@ -1303,6 +1801,17 @@ const CryptoInvestmentPlatform = () => {
               </button>
               {isAuthenticated ? (
                 <>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-left text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
+                    onClick={handleOpenBalanceHistory}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Wallet className="h-4 w-4" />
+                      Current Balance
+                    </span>
+                    <span>{formatCurrency(userBalance)}</span>
+                  </button>
                   <button
                     type="button"
                     className="w-full px-4 py-2 border border-emerald-500 rounded-lg"
@@ -1320,7 +1829,7 @@ const CryptoInvestmentPlatform = () => {
                   <button
                     type="button"
                     className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"
-                    onClick={() => handleOpenWindow('auto-trade')}
+                    onClick={openTradeSelector}
                   >
                     Trade
                   </button>
@@ -1355,7 +1864,31 @@ const CryptoInvestmentPlatform = () => {
         )}
       </nav>
 
-  <section className="pt-32 pb-20 px-6" id="hero">
+      <main className="pt-28">
+        {isAuthenticated ? (
+          <section id="member-banner" className="px-6 pb-10">
+            <div className="max-w-6xl mx-auto rounded-3xl border border-emerald-400/30 bg-gradient-to-br from-emerald-900/40 via-slate-950 to-blue-900/40 p-10 text-center shadow-lg shadow-emerald-500/20">
+              <div className="inline-flex items-center gap-3 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-5 py-2 text-sm font-semibold text-emerald-200">
+                <BadgeCheck className="h-4 w-4" />
+                Account Verified — Welcome Back, {signupForm.fullName || 'Vault Trader'}!
+              </div>
+              <h2 className="mt-6 text-4xl lg:text-5xl font-bold">Your Trading Command Center Is Now Active</h2>
+              <p className="mt-4 mx-auto max-w-3xl text-lg text-slate-200">
+                Manage capital flows, schedule instant withdrawals, and let our 99% guaranteed smart-trade robots execute precision strategies around the clock. Members regularly unlock up to <span className="text-emerald-300 font-semibold">300% weekly profit</span> through fully automated cycles.
+              </p>
+            </div>
+          </section>
+        ) : (
+          <section id="guest-banner" className="px-6 pb-10">
+            <div className="max-w-3xl mx-auto text-center">
+              <p className="text-lg leading-relaxed text-slate-200">
+                Your trading command center awaits with automated execution, insured vault custody, and precision analytics designed for serious investors even before you step inside.
+              </p>
+            </div>
+          </section>
+        )}
+
+        <section className="pt-4 pb-20 px-6" id="hero">
         <div className="max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className="space-y-6">
@@ -1375,14 +1908,16 @@ const CryptoInvestmentPlatform = () => {
               </p>
 
               <div className="flex flex-wrap gap-4">
-                <button
-                  type="button"
-                  className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-semibold hover:shadow-xl hover:shadow-blue-500/50 transition transform hover:scale-105"
-                  onClick={handleOpenSignInFlow}
-                >
-                  Log In
-                  <ChevronRight className="inline w-5 h-5 ml-2" />
-                </button>
+                {!isAuthenticated && (
+                  <button
+                    type="button"
+                    className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-semibold hover:shadow-xl hover:shadow-blue-500/50 transition transform hover:scale-105"
+                    onClick={handleOpenSignInFlow}
+                  >
+                    Log In
+                    <ChevronRight className="inline w-5 h-5 ml-2" />
+                  </button>
+                )}
                 <button
                   type="button"
                   className="px-8 py-4 border border-slate-600 rounded-lg font-semibold hover:bg-slate-800 transition"
@@ -1392,16 +1927,18 @@ const CryptoInvestmentPlatform = () => {
                 </button>
               </div>
 
-              <p className="text-sm text-slate-400">
-                Don't have an account yet?
-                <button
-                  type="button"
-                  className="ml-2 inline-flex items-center text-blue-300 underline-offset-2 hover:text-blue-200 hover:underline"
-                  onClick={handleOpenSignupFlow}
-                >
-                  Sign Up
-                </button>
-              </p>
+              {!isAuthenticated && (
+                <p className="text-sm text-slate-400">
+                  Don't have an account yet?
+                  <button
+                    type="button"
+                    className="ml-2 inline-flex items-center text-blue-300 underline-offset-2 hover:text-blue-200 hover:underline"
+                    onClick={handleOpenSignupFlow}
+                  >
+                    Sign Up
+                  </button>
+                </p>
+              )}
 
               <div className="flex items-center gap-6 pt-4">
                 <div className="flex items-center gap-2">
@@ -1491,105 +2028,90 @@ const CryptoInvestmentPlatform = () => {
             </div>
           </div>
         </div>
-      </section>
+        </section>
 
-      <section id="market-overview" className="py-16 px-6 bg-slate-900/50">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
-            <div>
-              <h2 className="text-3xl lg:text-4xl font-bold">Live Cryptocurrency Markets</h2>
-              <p className="text-slate-400">Prices update automatically every minute using real-time market data.</p>
-            </div>
-            <button
-              type="button"
-              className="self-start lg:self-center px-4 py-2 border border-blue-500/40 rounded-lg hover:bg-blue-500/10 transition"
-              onClick={handleRefreshMarkets}
-            >
-              Refresh now
-            </button>
-          </div>
-
-          <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur">
-            <table className="min-w-full divide-y divide-slate-800">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
-                  <th className="p-4">Asset</th>
-                  <th className="p-4">Price (USD)</th>
-                  <th className="p-4">24h Change</th>
-                  <th className="p-4">Market Cap</th>
-                  <th className="p-4">24h Volume</th>
-                  <th className="p-4">Trend</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>{marketRows}</tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section className="py-16 px-6 bg-slate-900/50" id="stats">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
-            {stats.map((stat) => (
-              <div key={stat.label} className="text-center space-y-2">
-                <p className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                  {stat.value}
-                </p>
-                <p className="text-slate-400">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="features" className="py-20 px-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16 space-y-4">
-            <h2 className="text-4xl lg:text-5xl font-bold">
-              Why Choose
-              <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> KryptoVault</span>
-            </h2>
-            <p className="text-xl text-slate-300 max-w-2xl mx-auto">
-              Experience the most advanced crypto investment platform with features designed for both beginners and professionals
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature) => (
-              <div
-                key={feature.title}
-                className="group p-8 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 hover:-translate-y-1"
-              >
-                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition">
-                  <feature.icon className="w-7 h-7" />
+        <section className="py-16 px-6 bg-slate-900/50" id="stats">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
+              {stats.map((stat) => (
+                <div key={stat.label} className="text-center space-y-2">
+                  <p className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                    {stat.value}
+                  </p>
+                  <p className="text-slate-400">{stat.label}</p>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
-                <p className="text-slate-400">{feature.desc}</p>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {isAuthenticated && (
-        <>
-          <section id="member-hub" className="py-20 px-6 bg-gradient-to-br from-emerald-900/40 via-slate-950 to-blue-900/40">
-            <div className="max-w-6xl mx-auto text-center space-y-6">
-              <div className="inline-flex items-center gap-3 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-5 py-2 text-sm font-semibold text-emerald-200">
-                <BadgeCheck className="h-4 w-4" />
-                Account Verified — Welcome Back, {signupForm.fullName || 'Vault Trader'}!
-              </div>
+        <section id="features" className="py-20 px-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="text-center mb-16 space-y-4">
               <h2 className="text-4xl lg:text-5xl font-bold">
-                Your Trading Command Center Is Now Active
+                Why Choose
+                <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> KryptoVault</span>
               </h2>
-              <p className="mx-auto max-w-3xl text-lg text-slate-200">
-                Manage capital flows, schedule instant withdrawals, and let our 99% guaranteed smart-trade robots execute precision strategies around the clock. Members regularly unlock up to <span className="text-emerald-300 font-semibold">300% weekly profit</span> through fully automated cycles.
+              <p className="text-xl text-slate-300 max-w-2xl mx-auto">
+                Experience the most advanced crypto investment platform with features designed for both beginners and professionals
               </p>
             </div>
-          </section>
 
-          <section id="deposit" className="py-20 px-6 bg-slate-900/60">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {features.map((feature) => (
+                <div
+                  key={feature.title}
+                  className="group p-8 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 hover:-translate-y-1"
+                >
+                  <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition">
+                    <feature.icon className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
+                  <p className="text-slate-400">{feature.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {isAuthenticated && (
+          <>
+            <section id="market-overview" className="py-16 px-6 bg-slate-900/50">
+              <div className="max-w-7xl mx-auto">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
+                  <div>
+                    <h2 className="text-3xl lg:text-4xl font-bold">Live Cryptocurrency Markets</h2>
+                    <p className="text-slate-400">Prices update automatically every minute using real-time market data.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="self-start lg:self-center px-4 py-2 border border-blue-500/40 rounded-lg hover:bg-blue-500/10 transition"
+                    onClick={handleRefreshMarkets}
+                  >
+                    Refresh now
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur">
+                  <table className="min-w-full divide-y divide-slate-800">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="p-4">Asset</th>
+                        <th className="p-4">Price (USD)</th>
+                        <th className="p-4">24h Change</th>
+                        <th className="p-4">Market Cap</th>
+                        <th className="p-4">24h Volume</th>
+                        <th className="p-4">Trend</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>{marketRows}</tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section id="deposit" className="py-20 px-6 bg-slate-900/60">
             <div className="max-w-6xl mx-auto grid gap-10 lg:grid-cols-2">
               <div className="space-y-5">
                 <h3 className="text-3xl font-bold text-emerald-300">Fund Your Vault Balance</h3>
@@ -1617,7 +2139,7 @@ const CryptoInvestmentPlatform = () => {
                   {DEPOSIT_ORDER.map((assetKey) => {
                     const meta = DEPOSIT_METADATA[assetKey];
                     const address = DEPOSIT_ADDRESSES[assetKey];
-                    const isInstructional = assetKey === 'card' || assetKey === 'wire';
+                    const isInstructional = assetKey === 'card';
                     return (
                       <div
                         key={`funding-${assetKey}`}
@@ -1645,9 +2167,9 @@ const CryptoInvestmentPlatform = () => {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
 
-          <section id="withdraw" className="py-20 px-6 bg-gradient-to-r from-purple-900/40 via-slate-950 to-blue-900/40">
+            <section id="withdraw" className="py-20 px-6 bg-gradient-to-r from-purple-900/40 via-slate-950 to-blue-900/40">
             <div className="max-w-6xl mx-auto grid gap-12 lg:grid-cols-2">
               <div className="rounded-3xl border border-purple-500/40 bg-white/5 p-8 backdrop-blur">
                 <h3 className="text-3xl font-bold text-purple-200">Withdraw Profits Instantly</h3>
@@ -1657,7 +2179,7 @@ const CryptoInvestmentPlatform = () => {
                 <div className="mt-6 space-y-4">
                   <div className="rounded-2xl border border-purple-500/40 bg-purple-500/10 p-4">
                     <p className="text-xs uppercase tracking-wide text-purple-200">Withdrawal Methods</p>
-                    <p className="mt-2 text-slate-100">USDT (TRC20 / ERC20), BTC, Direct Bank Wire</p>
+                    <p className="mt-2 text-slate-100">USDT (TRC20 / ERC20), BTC</p>
                   </div>
                   <div className="rounded-2xl border border-purple-500/40 bg-purple-500/10 p-4">
                     <p className="text-xs uppercase tracking-wide text-purple-200">Processing Time</p>
@@ -1677,9 +2199,9 @@ const CryptoInvestmentPlatform = () => {
                 <p className="text-slate-300">You are always in control—switch between reinvesting profits and withdrawing them with a single toggle.</p>
               </div>
             </div>
-          </section>
+            </section>
 
-          <section id="auto-trade" className="py-20 px-6 bg-slate-900/70">
+            <section id="auto-trade" className="py-20 px-6 bg-slate-900/70">
             <div className="max-w-6xl mx-auto grid gap-10 lg:grid-cols-2">
               <div className="space-y-4">
                 <h3 className="text-3xl font-bold text-blue-200">99% Guaranteed Trading Robots</h3>
@@ -1708,10 +2230,10 @@ const CryptoInvestmentPlatform = () => {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
 
-          {tradeJournal.length > 0 && (
-            <section id="execution-journal" className="py-20 px-6 bg-slate-950/60">
+            {tradeJournal.length > 0 && (
+              <section id="execution-journal" className="py-20 px-6 bg-slate-950/60">
               <div className="max-w-6xl mx-auto">
                 <div className="flex flex-col gap-2">
                   <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-emerald-200">
@@ -1762,36 +2284,38 @@ const CryptoInvestmentPlatform = () => {
                 </div>
               </div>
             </section>
-          )}
-        </>
-      )}
+            )}
 
-      <section className="py-20 px-6" id="about">
-        <div className="max-w-4xl mx-auto">
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-3xl blur-2xl opacity-30" />
-            <div className="relative bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-12 text-center space-y-6">
-              <h2 className="text-4xl lg:text-5xl font-bold">Ready to Start Trading?</h2>
-              <p className="text-xl opacity-90 max-w-2xl mx-auto">
-                Join thousands of traders who trust KryptoVault for their cryptocurrency investments
-              </p>
-              <button
-                type="button"
-                className="px-8 py-4 bg-white text-blue-600 rounded-lg font-semibold hover:shadow-xl transition transform hover:scale-105"
-                onClick={handleOpenSignupFlow}
-              >
-                Create Free Account
-                <ChevronRight className="inline w-5 h-5 ml-2" />
-              </button>
-              <p className="text-sm opacity-75">No credit card required • $500 minimum starting capital</p>
-            </div>
-          </div>
-        </div>
-      </section>
+            <section className="py-20 px-6" id="about">
+              <div className="max-w-4xl mx-auto">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-3xl blur-2xl opacity-30" />
+                  <div className="relative bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-12 text-center space-y-6">
+                    <h2 className="text-4xl lg:text-5xl font-bold">Ready to Start Trading?</h2>
+                    <p className="text-xl opacity-90 max-w-2xl mx-auto">
+                      Join thousands of traders who trust KryptoVault for their cryptocurrency investments
+                    </p>
+                    <button
+                      type="button"
+                      className="px-8 py-4 bg-white text-blue-600 rounded-lg font-semibold hover:shadow-xl transition transform hover:scale-105"
+                      onClick={handleOpenSignupFlow}
+                    >
+                      Create Free Account
+                      <ChevronRight className="inline w-5 h-5 ml-2" />
+                    </button>
+                    <p className="text-sm opacity-75">No credit card required • $500 minimum starting capital</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
 
-      <footer className="bg-slate-950 border-t border-slate-800 py-12 px-6" id="security">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
+      {isAuthenticated && (
+        <footer className="bg-slate-950 border-t border-slate-800 py-12 px-6" id="security">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
@@ -1954,9 +2478,10 @@ const CryptoInvestmentPlatform = () => {
                 Cookies
               </button>
             </div>
+            </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      )}
 
       {activePanel && (
         <div className="fixed inset-0 z-[58] flex items-center justify-center bg-slate-950/85 backdrop-blur px-4 py-8">
@@ -2483,14 +3008,14 @@ const CryptoInvestmentPlatform = () => {
                     className="rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-green-400 hover:to-emerald-400"
                     onClick={() => handleStrategyAction('buy', selectedCoin)}
                   >
-                    Buy & Fund Vault
+                    Buy Only
                   </button>
                   <button
                     type="button"
                     className="rounded-xl bg-gradient-to-r from-red-500 to-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-red-400 hover:to-orange-400"
                     onClick={() => handleStrategyAction('sell', selectedCoin)}
                   >
-                    Take Profit / Withdraw
+                    Sell Only
                   </button>
                   <button
                     type="button"
@@ -2522,6 +3047,475 @@ const CryptoInvestmentPlatform = () => {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTradeSelector && (
+        <div className="fixed inset-0 z-[63] flex items-start justify-center overflow-y-auto bg-slate-950/85 backdrop-blur px-4 py-8 md:items-center">
+          <div className="relative w-full max-w-3xl rounded-3xl border border-blue-500/30 bg-slate-900/95 p-8 shadow-2xl shadow-blue-500/30 max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              className="absolute right-6 top-6 text-slate-400 transition hover:text-white"
+              onClick={closeTradeSelector}
+              aria-label="Close trade selector"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/40 bg-blue-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-blue-200">
+                  <Zap className="h-4 w-4" />
+                  Trade Launcher
+                </div>
+                <h3 className="text-3xl font-bold text-white">Choose Your Market</h3>
+                <p className="text-slate-300">
+                  Pick the asset you want to control and deploy a buy or sell command instantly. We'll surface live pricing and route the order through the vault.
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {TRADE_CURRENCY_CHOICES.map(({ id, label, symbol, description }) => {
+                  const isActive = tradeCurrency === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTradeCurrency(id)}
+                      className={`rounded-2xl border px-4 py-4 text-left transition ${
+                        isActive
+                          ? 'border-blue-500 bg-blue-500/15 text-blue-100 shadow-lg shadow-blue-500/20'
+                          : 'border-slate-800 bg-slate-950/70 text-slate-200 hover:border-blue-400/60'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{label}</p>
+                      <p className="text-xs uppercase tracking-widest text-slate-400">{symbol}</p>
+                      <p className="mt-3 text-xs text-slate-400">{description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Current Price</p>
+                    <p className="mt-1 text-3xl font-semibold text-white">{formatCurrency(selectedTradeCoin.current_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">24h Change</p>
+                    <div
+                      className={`mt-1 inline-flex items-center gap-1 rounded-lg px-3 py-1 text-sm font-semibold ${
+                        (selectedTradeCoin.price_change_percentage_24h ?? 0) >= 0
+                          ? 'bg-green-500/15 text-green-300'
+                          : 'bg-red-500/15 text-red-300'
+                      }`}
+                    >
+                      {(selectedTradeCoin.price_change_percentage_24h ?? 0) >= 0 ? (
+                        <ArrowUpRight className="h-4 w-4" />
+                      ) : (
+                        <ArrowDownRight className="h-4 w-4" />
+                      )}
+                      {formatPercentage(selectedTradeCoin.price_change_percentage_24h ?? 0)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-xs text-slate-400">
+                    <p>
+                      Symbol <span className="font-semibold text-slate-200">{selectedTradeCoin.symbol.toUpperCase()}</span>
+                    </p>
+                    <p className="mt-1">
+                      Vault-ready routing ensures minimal slippage with instant withdrawal prep on profit.
+                    </p>
+                  </div>
+                  <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-green-400 hover:to-emerald-400"
+                      onClick={() => handleTradeSelection('buy')}
+                    >
+                      Buy {selectedTradeCoin.symbol.toUpperCase()}
+                    </button>
+                    <button
+                      type="button"
+                      className="flex-1 rounded-xl bg-gradient-to-r from-red-500 to-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-red-400 hover:to-orange-400"
+                      onClick={() => handleTradeSelection('sell')}
+                    >
+                      Sell {selectedTradeCoin.symbol.toUpperCase()}
+                    </button>
+                    <button
+                      type="button"
+                      className="flex-1 rounded-xl border border-blue-500/40 px-5 py-3 text-sm font-semibold text-blue-200 transition hover:border-blue-400 hover:text-blue-100"
+                      onClick={() => handleTradeSelection('auto')}
+                    >
+                      Auto Deploy {selectedTradeCoin.symbol.toUpperCase()}
+                    </button>
+                  </div>
+                </div>
+
+                {!isAuthenticated && (
+                  <p className="mt-4 text-xs text-blue-200">
+                    You will be prompted to sign in before the order confirms. New members can create an account in seconds.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-6">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-blue-200">
+                    <Zap className="h-4 w-4" />
+                    Direct Execution Catalog
+                  </div>
+                  <p className="text-xs text-slate-400 sm:text-right">
+                    Launch trades in one tap across the most active markets. Buttons instantly open the appropriate ticket.
+                  </p>
+                </div>
+
+                <div className="mt-4 max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                  {tradeCatalog.map((coin) => {
+                    const change = coin.price_change_percentage_24h ?? 0;
+                    const isPositive = change >= 0;
+                    return (
+                      <div
+                        key={coin.id}
+                        className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="flex items-center gap-4">
+                          <img src={coin.image} alt={`${coin.name} icon`} className="h-10 w-10 rounded-full" />
+                          <div>
+                            <p className="text-sm font-semibold text-white">{coin.name}</p>
+                            <p className="text-xs uppercase tracking-widest text-slate-400">{coin.symbol}</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-200">{formatCurrency(coin.current_price)}</p>
+                            <span
+                              className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${
+                                isPositive ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'
+                              }`}
+                            >
+                              {isPositive ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                              {formatPercentage(change)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 sm:w-60 sm:flex-row sm:flex-wrap">
+                          <button
+                            type="button"
+                            className="flex-1 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-4 py-2 text-xs font-semibold text-white transition hover:from-green-400 hover:to-emerald-400"
+                            onClick={() => handleCatalogExecution(coin, 'buy')}
+                          >
+                            Buy
+                          </button>
+                          <button
+                            type="button"
+                            className="flex-1 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 px-4 py-2 text-xs font-semibold text-white transition hover:from-red-400 hover:to-orange-400"
+                            onClick={() => handleCatalogExecution(coin, 'sell')}
+                          >
+                            Sell
+                          </button>
+                          <button
+                            type="button"
+                            className="flex-1 rounded-lg border border-blue-500/40 px-4 py-2 text-xs font-semibold text-blue-200 transition hover:border-blue-400 hover:text-blue-100"
+                            onClick={() => handleCatalogExecution(coin, 'auto')}
+                          >
+                            Auto Deploy
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tradeIntent && (
+        <div className="fixed inset-0 z-[64] flex items-center justify-center bg-slate-950/85 backdrop-blur px-4 py-8">
+          <div className="relative w-full max-w-xl rounded-3xl border border-emerald-400/30 bg-slate-900/95 p-8 shadow-2xl shadow-emerald-500/20">
+            <button
+              type="button"
+              className="absolute right-6 top-6 text-slate-400 transition hover:text-white"
+              onClick={handleCancelManualTrade}
+              aria-label="Close manual trade ticket"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-emerald-200">
+                  <Wallet className="h-4 w-4" />
+                  Manual Order Ticket
+                </div>
+                <h3 className="text-3xl font-bold text-white">
+                  {tradeIntent.action === 'buy' ? 'Confirm Purchase' : 'Confirm Sale'}
+                </h3>
+                <p className="text-slate-300">
+                  Available balance {formatCurrency(userBalance)}. Specify the lot size you want to {tradeIntent.action} before we execute this order.
+                </p>
+              </div>
+
+              <div className="grid gap-4">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Asset</p>
+                  <p className="mt-1 text-lg font-semibold text-white">
+                    {tradeIntent.coin.name} ({tradeIntent.coin.symbol.toUpperCase()})
+                  </p>
+                  <p className="text-sm text-slate-400">Spot price {formatCurrency(tradeIntent.coin.current_price)}</p>
+                </div>
+
+                <label className="flex flex-col gap-2">
+                  <span className="text-xs uppercase tracking-wide text-slate-500">Preferred Lot Size (USD)</span>
+                  <input
+                    type="number"
+                    min={MIN_LOT_NOTIONAL}
+                    step="0.01"
+                    value={tradeLotSize}
+                    onChange={(event) => {
+                      setTradeLotSize(event.target.value);
+                      setTradeIntentError(null);
+                    }}
+                    className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
+                  />
+                  <span className="text-xs text-slate-500">Enter at least {formatCurrency(MIN_LOT_NOTIONAL)}. We debit or credit this notional immediately against your vault balance.</span>
+                </label>
+
+                {tradeIntentError && <p className="text-sm text-red-400">{tradeIntentError}</p>}
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                  onClick={handleCancelManualTrade}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-lg px-5 py-3 text-sm font-semibold text-white transition ${
+                    tradeIntent.action === 'buy'
+                      ? 'bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-400 hover:to-green-400'
+                      : 'bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-400 hover:to-orange-400'
+                  }`}
+                  onClick={handleConfirmManualTrade}
+                >
+                  {tradeIntent.action === 'buy' ? 'Confirm Buy' : 'Confirm Sell'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTradeSummary && tradeSummary && (
+        <div className="fixed inset-0 z-[66] flex items-center justify-center bg-slate-950/85 backdrop-blur px-4 py-8">
+          <div className="relative w-full max-w-3xl rounded-3xl border border-purple-500/30 bg-slate-900/95 p-8 shadow-2xl shadow-purple-500/30 max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              className="absolute right-6 top-6 text-slate-400 transition hover:text-white"
+              onClick={closeTradeSummary}
+              aria-label="Close trade summary"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-purple-200">
+                  <BarChart3 className="h-4 w-4" />
+                  Trade Proceedings
+                </div>
+                <h3 className="text-3xl font-bold text-white">
+                  {tradeSummary.strategy === 'auto' ? 'Automated Cycle' : 'Manual Execution'} • {tradeSummary.symbol}
+                </h3>
+                <p className="text-slate-300">
+                  Full breakdown of the {tradeSummary.action.toUpperCase()} order on {tradeSummary.coinName}. Review fills, balance adjustments, and journaled events in one place.
+                </p>
+              </div>
+
+              <div className="grid gap-4 rounded-3xl border border-slate-800 bg-slate-950/70 p-6 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                  <p className="text-lg font-semibold text-white capitalize">{tradeSummary.status.replace('-', ' ')}</p>
+                  <p className="text-xs text-slate-400">Strategy: {tradeSummary.strategy === 'auto' ? 'Auto Pilot' : 'Manual Desk'}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Notional</p>
+                  <p className="text-lg font-semibold text-white">{formatCurrency(tradeSummary.notional)}</p>
+                  <p className="text-xs text-slate-400">Units filled: {tradeSummary.units.toFixed(4)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Fill Price</p>
+                  <p className="text-lg font-semibold text-white">{formatCurrency(tradeSummary.price)}</p>
+                  <p className="text-xs text-slate-400">Action: {tradeSummary.action.toUpperCase()}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Balance After</p>
+                  <p className="text-lg font-semibold text-emerald-300">{formatCurrency(tradeSummary.balanceAfter)}</p>
+                  <p className="text-xs text-slate-400">Result: {tradeSummary.result != null ? formatCurrency(tradeSummary.result) : 'N/A'}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Entry Time</p>
+                  <p className="text-sm font-semibold text-white">{new Date(tradeSummary.entryTimestamp).toLocaleString()}</p>
+                </div>
+                {tradeSummary.exitTimestamp && (
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Exit Time</p>
+                    <p className="text-sm font-semibold text-white">{new Date(tradeSummary.exitTimestamp).toLocaleString()}</p>
+                  </div>
+                )}
+              </div>
+
+              {tradeSummary.notes && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+                  <p className="text-slate-200 font-semibold">Desk Notes</p>
+                  <p className="mt-2 leading-relaxed">{tradeSummary.notes}</p>
+                </div>
+              )}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-white">Balance Movements</p>
+                    <Wallet className="h-4 w-4 text-emerald-300" />
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {tradeSummaryLedger.length === 0 && (
+                      <p className="text-xs text-slate-500">No ledger entries recorded for this trade yet.</p>
+                    )}
+                    {tradeSummaryLedger.map((entry) => {
+                      const amount = Math.abs(entry.amountChange);
+                      const sign = entry.amountChange >= 0 ? '+' : '-';
+                      return (
+                        <div key={entry.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300">
+                          <p className="font-semibold text-white">{entry.description}</p>
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className={entry.amountChange >= 0 ? 'text-emerald-300' : 'text-red-300'}>
+                              {sign}
+                              {formatCurrency(amount)}
+                            </span>
+                            <span className="text-slate-400">Balance {formatCurrency(entry.balanceAfter)}</span>
+                          </div>
+                          <p className="mt-1 text-slate-500">{new Date(entry.timestamp).toLocaleString()}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-white">Execution Journal</p>
+                    <BadgeCheck className="h-4 w-4 text-blue-300" />
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {tradeSummaryJournalEntries.length === 0 && (
+                      <p className="text-xs text-slate-500">No journal entries captured for this trade yet.</p>
+                    )}
+                    {tradeSummaryJournalEntries.map((entry) => (
+                      <div key={entry.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300">
+                        <p className="font-semibold text-white">
+                          {entry.strategy === 'auto' ? 'Auto' : 'Manual'} {entry.action.toUpperCase()} • {entry.symbol}
+                        </p>
+                        <p className="mt-1">
+                          {formatCurrency(entry.price)} @ {entry.size.toFixed(4)} units
+                          {entry.result != null ? ` • P/L ${formatCurrency(entry.result)}` : ''}
+                        </p>
+                        <p className="mt-1 text-slate-500">{new Date(entry.timestamp).toLocaleString()}</p>
+                        {entry.notes && <p className="mt-1 text-slate-400">{entry.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-700 px-5 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
+                  onClick={closeTradeSummary}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBalanceHistory && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-slate-950/85 backdrop-blur px-4 py-8">
+          <div className="relative w-full max-w-2xl rounded-3xl border border-emerald-500/30 bg-slate-900/95 p-8 shadow-2xl shadow-emerald-500/20 max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              className="absolute right-6 top-6 text-slate-400 transition hover:text-white"
+              onClick={handleCloseBalanceHistory}
+              aria-label="Close balance history"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-emerald-200">
+                  <Wallet className="h-4 w-4" />
+                  Balance Ledger
+                </div>
+                <h3 className="text-3xl font-bold text-white">Transaction History</h3>
+                <p className="text-slate-300">
+                  Every debit and credit impacting your vault balance. Use this view to reconcile auto cycles, manual trades, and system events.
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Event</span>
+                  <span>Change</span>
+                </div>
+                <div className="mt-3 max-h-[480px] space-y-3 overflow-y-auto pr-1">
+                  {balanceLedger.length === 0 && (
+                    <p className="text-sm text-slate-500">No balance movements recorded yet.</p>
+                  )}
+                  {balanceLedger.map((entry) => {
+                    const amount = Math.abs(entry.amountChange);
+                    const sign = entry.amountChange >= 0 ? '+' : '-';
+                    return (
+                      <div key={entry.id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="font-semibold text-white">{entry.description}</p>
+                            <p className="text-xs text-slate-500">{new Date(entry.timestamp).toLocaleString()}</p>
+                            <p className="text-xs text-slate-500">Ref: {entry.referenceId}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className={entry.amountChange >= 0 ? 'text-emerald-300' : 'text-red-300'}>
+                              {sign}
+                              {formatCurrency(amount)}
+                            </p>
+                            <p className="text-xs text-slate-400">Balance {formatCurrency(entry.balanceAfter)}</p>
+                            <p className="text-[10px] uppercase tracking-widest text-slate-500">{entry.strategy}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-700 px-5 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
+                  onClick={handleCloseBalanceHistory}
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

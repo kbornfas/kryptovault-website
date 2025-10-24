@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { CryptoType } from '@prisma/client';
 import { IsEnum, IsNumber, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -62,11 +62,18 @@ export class CryptoPaymentsController {
     }
   }
 
-  @Get('deposit-address')
-  async getDepositAddress(@Body('cryptoType') cryptoType: CryptoType) {
+  @Get('deposit-address/:cryptoType')
+  async getDepositAddress(@Param('cryptoType') cryptoTypeParam: string) {
     try {
-      return await this.cryptoPaymentsService.getDepositAddress(cryptoType);
+      const normalized = cryptoTypeParam.toUpperCase();
+      if (!Object.values(CryptoType).includes(normalized as CryptoType)) {
+        throw new BadRequestException('Unsupported crypto asset.');
+      }
+      return await this.cryptoPaymentsService.getDepositAddress(normalized as CryptoType);
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException(error.message);
     }
   }
