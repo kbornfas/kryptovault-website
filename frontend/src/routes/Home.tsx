@@ -553,6 +553,7 @@ const CryptoInvestmentPlatform = () => {
     setMobileMenuOpen(false);
   }, []);
 
+
   const handleCoinQuickView = useCallback((coin: MarketCoin, action: 'buy' | 'sell' | 'auto' | null = null) => {
     setSelectedCoin(coin);
     setPendingAction(action ?? 'view');
@@ -672,6 +673,14 @@ const CryptoInvestmentPlatform = () => {
       password: '',
     }));
   }, [registeredProfile]);
+
+  const handleDashToggle = useCallback(() => {
+    if (!isAuthenticated) {
+      handleOpenSignInFlow();
+      return;
+    }
+    toggleDashMenu();
+  }, [handleOpenSignInFlow, isAuthenticated, toggleDashMenu]);
 
   const handleCloseSignInFlow = useCallback(() => {
     setShowSignInFlow(false);
@@ -1138,21 +1147,25 @@ const CryptoInvestmentPlatform = () => {
         return;
       }
 
-      if (action === 'buy' && userBalance <= MIN_TRADE_BALANCE) {
-        setTradeFeedback(`Balance below the ${formatCurrency(MIN_TRADE_BALANCE)} trading threshold. Deposit more funds to place buy orders.`);
+      if (userBalance <= MIN_TRADE_BALANCE) {
+        setTradeFeedback(`Balance below the ${formatCurrency(MIN_TRADE_BALANCE)} trading threshold. Deposit more funds to execute trades.`);
         return;
       }
 
       if (action === 'auto') {
         startAutoPilotCycle(coin);
-        return;
       }
 
-      setTradeIntent({ coin, action });
-      setTradeLotSize('');
-      setTradeIntentError(null);
+      navigate('/trade-execution', {
+        state: {
+          action,
+          coin,
+          initiatedAt: new Date().toISOString(),
+          availableBalance: userBalance,
+        },
+      });
     },
-    [handleOpenSignInFlow, isAuthenticated, setSignInMessage, startAutoPilotCycle, userBalance],
+    [handleOpenSignInFlow, isAuthenticated, navigate, setSignInMessage, startAutoPilotCycle, userBalance],
   );
 
   const handleTradeSelection = useCallback(
@@ -1743,25 +1756,32 @@ const CryptoInvestmentPlatform = () => {
     (path: string) => {
       setMobileMenuOpen(false);
       closeDashMenu();
+
+      if (path.startsWith('#')) {
+        if (typeof window !== 'undefined') {
+          const anchorId = path.replace(/^#/, '');
+          window.location.hash = anchorId;
+          const anchor = document.getElementById(anchorId);
+          if (anchor) {
+            anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
+          }
+        }
+        return;
+      }
+
       navigate(path);
     },
     [closeDashMenu, navigate],
   );
 
-  const scrollToSection = useCallback((sectionId: string) => {
-    if (typeof document === 'undefined') {
-      return false;
-    }
-    const element = document.getElementById(sectionId);
-    if (!element) {
-      return false;
-    }
-    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return true;
-  }, []);
-
   const handleDashMenuAction = useCallback(
     (action: 'withdraw' | 'auto' | 'history' | 'markets' | 'about' | 'contact') => {
+      if (!isAuthenticated) {
+        closeDashMenu();
+        handleOpenSignInFlow();
+        return;
+      }
+
       closeDashMenu();
       setMobileMenuOpen(false);
 
@@ -1770,22 +1790,16 @@ const CryptoInvestmentPlatform = () => {
           handleOpenPanel('withdraw');
           break;
         case 'auto':
-          if (!scrollToSection('auto-trade')) {
-            handleNavigate('/auto-trading');
-          }
+          handleNavigate('/auto-trading');
           break;
         case 'history':
-          handleNavigate('/trade-history');
+          handleOpenBalanceHistory();
           break;
         case 'markets':
-          if (!scrollToSection('market-overview')) {
-            handleNavigate('/markets');
-          }
+          handleNavigate('#market-overview');
           break;
         case 'about':
-          if (!scrollToSection('about')) {
-            handleNavigate('/about');
-          }
+          handleNavigate('/about');
           break;
         case 'contact':
           handleNavigate('/contact');
@@ -1794,8 +1808,21 @@ const CryptoInvestmentPlatform = () => {
           break;
       }
     },
-    [closeDashMenu, handleNavigate, handleOpenPanel, scrollToSection],
+    [
+      closeDashMenu,
+      handleNavigate,
+      handleOpenBalanceHistory,
+      handleOpenPanel,
+      handleOpenSignInFlow,
+      isAuthenticated,
+    ],
   );
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setShowDashMenu(false);
+    }
+  }, [isAuthenticated]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white">
@@ -1810,10 +1837,10 @@ const CryptoInvestmentPlatform = () => {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={toggleDashMenu}
+                  onClick={handleDashToggle}
                   className="flex h-10 flex-col items-center justify-center gap-[1mm] rounded-lg border border-white/10 bg-white/5 px-2 text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-                  aria-label="Open quick actions menu"
-                  aria-expanded={showDashMenu}
+                  aria-label={isAuthenticated ? 'Open quick actions menu' : 'Sign in to access quick actions'}
+                  aria-expanded={isAuthenticated ? showDashMenu : false}
                   aria-controls="dash-quick-actions"
                 >
                   <span className="block h-[3px] w-8 rounded-full bg-white" />
@@ -1900,7 +1927,7 @@ const CryptoInvestmentPlatform = () => {
         )}
       </nav>
 
-      {showDashMenu && (
+      {isAuthenticated && showDashMenu && (
         <div
           role="presentation"
           aria-hidden="true"
@@ -1909,55 +1936,57 @@ const CryptoInvestmentPlatform = () => {
         />
       )}
 
-      <div
-        id="dash-quick-actions"
-        className={`fixed top-24 left-6 z-[52] w-56 rounded-2xl border border-slate-800/80 bg-slate-950/95 shadow-xl shadow-blue-500/20 backdrop-blur transition-all duration-300 ${showDashMenu ? 'translate-x-0 opacity-100' : '-translate-x-8 opacity-0 pointer-events-none'}`}
-      >
-        <div className="flex flex-col divide-y divide-slate-800/60 py-2">
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('withdraw')}
-          >
-            Withdraw
-          </button>
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('auto')}
-          >
-            Auto Trade
-          </button>
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('history')}
-          >
-            History
-          </button>
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('markets')}
-          >
-            Markets
-          </button>
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('about')}
-          >
-            About
-          </button>
-          <button
-            type="button"
-            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-            onClick={() => handleDashMenuAction('contact')}
-          >
-            Contact
-          </button>
+      {isAuthenticated && (
+        <div
+          id="dash-quick-actions"
+          className={`fixed top-24 left-6 z-[52] w-56 rounded-2xl border border-slate-800/80 bg-slate-950/95 shadow-xl shadow-blue-500/20 backdrop-blur transition-all duration-300 ${showDashMenu ? 'translate-x-0 opacity-100' : '-translate-x-8 opacity-0 pointer-events-none'}`}
+        >
+          <div className="flex flex-col divide-y divide-slate-800/60 py-2">
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('withdraw')}
+            >
+              Withdraw
+            </button>
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('auto')}
+            >
+              Auto Trade
+            </button>
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('history')}
+            >
+              History
+            </button>
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('markets')}
+            >
+              Markets
+            </button>
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('about')}
+            >
+              About
+            </button>
+            <button
+              type="button"
+              className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => handleDashMenuAction('contact')}
+            >
+              Contact
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <main className="pt-28">
         {isAuthenticated ? (

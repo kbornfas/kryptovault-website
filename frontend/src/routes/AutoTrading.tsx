@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 type MarketCoin = {
   id: string;
@@ -55,6 +56,15 @@ const AutoTrading = () => {
   const [sessions, setSessions] = useState<Record<string, AutoSession>>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timersRef = useRef<Record<string, number>>({});
+  const navigate = useNavigate();
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/');
+  };
 
   useEffect(() => {
     const fetchCoins = async () => {
@@ -204,23 +214,51 @@ const AutoTrading = () => {
 
   if (loading) {
     return (
-      <section className="mx-auto flex max-w-5xl items-center justify-center px-6 py-24">
-        <div className="h-16 w-16 animate-spin rounded-full border-4 border-purple-500 border-t-transparent" />
+      <section className="mx-auto max-w-5xl px-6 py-10">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-indigo-100 transition hover:border-white/40 hover:text-white"
+        >
+          <span className="text-lg font-semibold">&lt;-</span>
+          <span>Back</span>
+        </button>
+        <div className="mt-24 flex items-center justify-center">
+          <div className="h-16 w-16 animate-spin rounded-full border-4 border-purple-500 border-t-transparent" />
+        </div>
       </section>
     );
   }
 
   if (error) {
     return (
-      <section className="mx-auto max-w-4xl px-6 py-24 text-center">
-        <h2 className="text-3xl font-semibold text-red-300">Unable to load cryptocurrency catalogue</h2>
-        <p className="mt-4 text-indigo-100/80">{error}. Please refresh the page to try again.</p>
+      <section className="mx-auto max-w-4xl px-6 py-10">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-indigo-100 transition hover:border-white/40 hover:text-white"
+        >
+          <span className="text-lg font-semibold">&lt;-</span>
+          <span>Back</span>
+        </button>
+        <div className="mt-16 text-center">
+          <h2 className="text-3xl font-semibold text-red-300">Unable to load cryptocurrency catalogue</h2>
+          <p className="mt-4 text-indigo-100/80">{error}. Please refresh the page to try again.</p>
+        </div>
       </section>
     );
   }
 
   return (
-    <section className="mx-auto max-w-6xl space-y-10 px-6 py-10">
+    <section className="mx-auto max-w-6xl px-6 py-10">
+      <button
+        type="button"
+        onClick={handleBack}
+        className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-indigo-100 transition hover:border-white/40 hover:text-white"
+      >
+        <span className="text-lg font-semibold">&lt;-</span>
+        <span>Back</span>
+      </button>
       <header className="space-y-4">
         <h1 className="text-4xl font-bold">Automated Trading Control Center</h1>
         <p className="max-w-3xl text-lg text-indigo-100/80">

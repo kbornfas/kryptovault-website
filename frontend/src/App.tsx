@@ -14,6 +14,7 @@ const AdminRoute = lazy(() => import('./components/admin/AdminRoute'));
 const TradeHistoryRoute = lazy(() => import('./routes/TradeHistory'));
 const AutoTradingRoute = lazy(() => import('./routes/AutoTrading'));
 const ResetPasswordRoute = lazy(() => import('./routes/ResetPassword'));
+const TradeExecutionRoute = lazy(() => import('./routes/TradeExecution'));
 
 const DefaultLayout: React.FC = () => (
   <div className="bg-gradient-to-b from-indigo-900 via-purple-800 to-black text-white min-h-screen flex flex-col">
@@ -22,6 +23,14 @@ const DefaultLayout: React.FC = () => (
       <Outlet />
     </main>
     <Footer />
+  </div>
+);
+
+const MinimalLayout: React.FC = () => (
+  <div className="bg-gradient-to-b from-indigo-900 via-purple-800 to-black text-white min-h-screen flex flex-col">
+    <main className="flex-1">
+      <Outlet />
+    </main>
   </div>
 );
 
@@ -34,14 +43,17 @@ const App: React.FC = () => {
         <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-black text-white">Loading...</div>}>
           <Routes>
             <Route path="/" element={<HomeRoute />} />
-            <Route element={<DefaultLayout />}>
+            <Route element={<MinimalLayout />}>
               <Route path="/about" element={<AboutRoute />} />
               <Route path="/contact" element={<ContactRoute />} />
+              <Route path="/auto-trading" element={<AutoTradingRoute />} />
+            </Route>
+            <Route element={<DefaultLayout />}>
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/signup" element={<SignUpRoute />} />
               <Route path="/reset-password" element={<ResetPasswordRoute />} />
               <Route path="/trade-history" element={<TradeHistoryRoute />} />
-              <Route path="/auto-trading" element={<AutoTradingRoute />} />
+              <Route path="/trade-execution" element={<TradeExecutionRoute />} />
             </Route>
             <Route element={<AdminRoute />}>
               <Route path="/admin" element={<AdminDashboard />} />
