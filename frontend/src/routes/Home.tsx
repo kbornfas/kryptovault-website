@@ -1,26 +1,29 @@
 import {
-    ArrowDownRight,
-    ArrowUpRight,
-    BadgeCheck,
-    BarChart3,
-    ChevronRight,
-    Copy,
-    Globe,
-    KeyRound,
-    Lock,
-    LogOut,
-    Mail,
-    Menu,
-    Shield,
-    Star,
-    TrendingUp,
-    User,
-    Wallet,
-    X,
-    Zap
+  ArrowDownRight,
+  ArrowUpRight,
+  BadgeCheck,
+  BarChart3,
+  ChevronRight,
+  Copy,
+  Globe,
+  Headphones,
+  KeyRound,
+  Lock,
+  LogOut,
+  Mail,
+  Menu,
+  Play,
+  Shield,
+  Star,
+  TrendingUp,
+  User,
+  Wallet,
+  X,
+  Zap
 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 type CryptoTab = 'bitcoin' | 'ethereum' | 'solana';
 
@@ -187,8 +190,9 @@ const DEMO_INITIAL_CAPITAL = 5_000;
 const TRADE_JOURNAL_STORAGE_KEY = 'kv-trade-journal';
 const BALANCE_STORAGE_KEY = 'kv-balance';
 const BALANCE_LEDGER_STORAGE_KEY = 'kv-balance-ledger';
-const MIN_TRADE_BALANCE = 500;
-const MIN_LOT_NOTIONAL = 100;
+const ACCOUNT_INITIAL_BALANCE = 0;
+const MIN_TRADE_BALANCE = 10;
+const MIN_LOT_NOTIONAL = 10;
 const AUTO_PROFIT_TARGET_MULTIPLIER = 3;
 const AUTO_MAX_CYCLES = 12;
 
@@ -235,7 +239,7 @@ const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string
     label: 'USDT • Tether (TRC-20)',
     network: 'Tron TRC-20',
     description: 'Stablecoin onboarding for instant credit to your vault. Recommended for funding automated strategies.',
-    note: 'Minimum deposit $500. Zero-fee internal crediting within 60 seconds.',
+    note: 'Minimum deposit $10. Zero-fee internal crediting within 60 seconds.',
   },
   btc: {
     label: 'BTC • Bitcoin',
@@ -253,7 +257,7 @@ const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string
     label: 'SOL • Solana',
     network: 'Solana Mainnet',
     description: 'Ultra-low latency network for high-frequency strategies and index rebalancing.',
-    note: 'Minimum deposit $500. Instant availability once detected on-chain.',
+    note: 'Minimum deposit $10. Instant availability once detected on-chain.',
   },
   card: {
     label: 'Card Checkout',
@@ -351,7 +355,7 @@ const securityHighlights = [
 
 const depositSteps = [
   'Choose the asset and confirm the matching network before sending funds.',
-  'Transfer at least $500 to activate smart-trade automation and risk controls.',
+  `Transfer at least ${formatCurrency(MIN_TRADE_BALANCE)} to activate smart-trade automation and risk controls.`,
   'Funds appear in your vault wallet automatically after confirmations.',
 ];
 
@@ -424,8 +428,10 @@ const generateLinePath = (values: number[], width: number, height: number): { pa
 
 const CryptoInvestmentPlatform = () => {
   const navigate = useNavigate();
+  const { user, logout: authLogout } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showDashMenu, setShowDashMenu] = useState(false);
   const [activeTab, setActiveTab] = useState<CryptoTab>('bitcoin');
   const [cryptoData, setCryptoData] = useState<Record<CryptoTab, CryptoMeta>>(heroDefaults);
   const [marketCoins, setMarketCoins] = useState<MarketCoin[]>([]);
@@ -433,6 +439,7 @@ const CryptoInvestmentPlatform = () => {
   const [marketError, setMarketError] = useState<string | null>(null);
   const hasLoadedOnce = useRef(false);
   const autoExecutionTimers = useRef<number[]>([]);
+  const authStateRef = useRef(false);
   const [showSimulation, setShowSimulation] = useState(false);
   const [chartIndex, setChartIndex] = useState(0);
   const [chartComplete, setChartComplete] = useState(false);
@@ -466,7 +473,7 @@ const CryptoInvestmentPlatform = () => {
   const [selectedWithdrawalMethod, setSelectedWithdrawalMethod] = useState<WithdrawalMethod>('usdt');
   const [withdrawForm, setWithdrawForm] = useState<WithdrawalFormState>({ amount: '', destination: '' });
   const [withdrawFeedback, setWithdrawFeedback] = useState<string | null>(null);
-  const [userBalance, setUserBalance] = useState<number>(DEMO_INITIAL_CAPITAL);
+  const [userBalance, setUserBalance] = useState<number>(ACCOUNT_INITIAL_BALANCE);
   const [tradeIntent, setTradeIntent] = useState<{ coin: MarketCoin; action: 'buy' | 'sell' } | null>(null);
   const [tradeLotSize, setTradeLotSize] = useState('');
   const [tradeIntentError, setTradeIntentError] = useState<string | null>(null);
@@ -537,6 +544,15 @@ const CryptoInvestmentPlatform = () => {
     setDepositForm({ amount: '', memo: '' });
   }, []);
 
+  const closeDashMenu = useCallback(() => {
+    setShowDashMenu(false);
+  }, []);
+
+  const toggleDashMenu = useCallback(() => {
+    setShowDashMenu((previous) => !previous);
+    setMobileMenuOpen(false);
+  }, []);
+
   const handleCoinQuickView = useCallback((coin: MarketCoin, action: 'buy' | 'sell' | 'auto' | null = null) => {
     setSelectedCoin(coin);
     setPendingAction(action ?? 'view');
@@ -600,6 +616,34 @@ const CryptoInvestmentPlatform = () => {
       }),
     );
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      authStateRef.current = true;
+      setIsAuthenticated(true);
+      setRegisteredProfile((previous) => {
+        const fullName = user.name?.trim() || previous?.fullName || user.email || 'Vault Trader';
+        const password = previous?.password ?? '';
+        return {
+          fullName,
+          email: user.email,
+          password,
+        };
+      });
+      setSignupForm((previous) => ({
+        fullName: user.name?.trim() || previous.fullName || user.email || 'Vault Trader',
+        email: user.email,
+        password: previous.password,
+        confirmPassword: previous.confirmPassword,
+      }));
+      return;
+    }
+
+    if (authStateRef.current) {
+      authStateRef.current = false;
+      setIsAuthenticated(false);
+    }
+  }, [user]);
 
   const persistBalance = useCallback(
     (input: number | ((previous: number) => number)) => {
@@ -720,6 +764,10 @@ const CryptoInvestmentPlatform = () => {
   );
 
   const handleLogout = useCallback(() => {
+    if (user) {
+      authLogout();
+    }
+    authStateRef.current = false;
     setIsAuthenticated(false);
     setSignupForm({ fullName: '', email: '', password: '', confirmPassword: '' });
     setVerificationCode('');
@@ -729,12 +777,13 @@ const CryptoInvestmentPlatform = () => {
     setShowSignInFlow(false);
     setSignInMessage('');
     setSignInForm({ email: registeredProfile?.email ?? '', password: '' });
-    persistAuth(registeredProfile ?? null, false);
+    const profileForStorage = user ? null : registeredProfile ?? null;
+    persistAuth(profileForStorage, false);
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(BALANCE_STORAGE_KEY);
     }
-    setUserBalance(DEMO_INITIAL_CAPITAL);
-  }, [persistAuth, registeredProfile]);
+    setUserBalance(ACCOUNT_INITIAL_BALANCE);
+  }, [authLogout, persistAuth, registeredProfile, user]);
 
   const findCoinById = useCallback(
     (coinId: string): MarketCoin | null => {
@@ -840,7 +889,7 @@ const CryptoInvestmentPlatform = () => {
     (coin: MarketCoin) => {
       let workingBalance = Number(userBalance.toFixed(2));
       if (workingBalance <= MIN_TRADE_BALANCE) {
-        setTradeFeedback('Auto trading requires a balance above $500. Deposit funds to deploy the robot.');
+        setTradeFeedback(`Auto trading requires a balance above ${formatCurrency(MIN_TRADE_BALANCE)}. Deposit funds to deploy the robot.`);
         return;
       }
 
@@ -1090,7 +1139,7 @@ const CryptoInvestmentPlatform = () => {
       }
 
       if (action === 'buy' && userBalance <= MIN_TRADE_BALANCE) {
-        setTradeFeedback('Balance below the $500 trading threshold. Deposit more funds to place buy orders.');
+        setTradeFeedback(`Balance below the ${formatCurrency(MIN_TRADE_BALANCE)} trading threshold. Deposit more funds to place buy orders.`);
         return;
       }
 
@@ -1260,6 +1309,12 @@ const CryptoInvestmentPlatform = () => {
   }, []);
 
   useEffect(() => {
+    if (mobileMenuOpen) {
+      setShowDashMenu(false);
+    }
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -1286,7 +1341,7 @@ const CryptoInvestmentPlatform = () => {
             setUserBalance(Number(parsedBalance.toFixed(2)));
           }
         } else {
-          persistBalance(DEMO_INITIAL_CAPITAL);
+          persistBalance(ACCOUNT_INITIAL_BALANCE);
         }
 
         const ledgerRaw = window.localStorage.getItem(BALANCE_LEDGER_STORAGE_KEY);
@@ -1305,8 +1360,8 @@ const CryptoInvestmentPlatform = () => {
             id: `ledger-${generateTradeId()}`,
             referenceId: 'init-balance',
             description: 'Initial vault balance deployed',
-            amountChange: DEMO_INITIAL_CAPITAL,
-            balanceAfter: DEMO_INITIAL_CAPITAL,
+            amountChange: ACCOUNT_INITIAL_BALANCE,
+            balanceAfter: ACCOUNT_INITIAL_BALANCE,
             timestamp: new Date().toISOString(),
             strategy: 'system',
             category: 'system',
@@ -1327,13 +1382,13 @@ const CryptoInvestmentPlatform = () => {
       setSignInForm({ email: DEMO_USER_PROFILE.email, password: '' });
       setIsAuthenticated(true);
       persistAuth(DEMO_USER_PROFILE, true);
-      persistBalance(DEMO_INITIAL_CAPITAL);
+      persistBalance(ACCOUNT_INITIAL_BALANCE);
       const initialEntry: BalanceLedgerEntry = {
         id: `ledger-${generateTradeId()}`,
         referenceId: 'init-balance',
         description: 'Initial vault balance deployed',
-        amountChange: DEMO_INITIAL_CAPITAL,
-        balanceAfter: DEMO_INITIAL_CAPITAL,
+        amountChange: ACCOUNT_INITIAL_BALANCE,
+        balanceAfter: ACCOUNT_INITIAL_BALANCE,
         timestamp: new Date().toISOString(),
         strategy: 'system',
         category: 'system',
@@ -1684,10 +1739,63 @@ const CryptoInvestmentPlatform = () => {
     setShowSimulation(false);
   };
 
-  const handleNavigate = (path: string) => {
-    setMobileMenuOpen(false);
-    navigate(path);
-  };
+  const handleNavigate = useCallback(
+    (path: string) => {
+      setMobileMenuOpen(false);
+      closeDashMenu();
+      navigate(path);
+    },
+    [closeDashMenu, navigate],
+  );
+
+  const scrollToSection = useCallback((sectionId: string) => {
+    if (typeof document === 'undefined') {
+      return false;
+    }
+    const element = document.getElementById(sectionId);
+    if (!element) {
+      return false;
+    }
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+  }, []);
+
+  const handleDashMenuAction = useCallback(
+    (action: 'withdraw' | 'auto' | 'history' | 'markets' | 'about' | 'contact') => {
+      closeDashMenu();
+      setMobileMenuOpen(false);
+
+      switch (action) {
+        case 'withdraw':
+          handleOpenPanel('withdraw');
+          break;
+        case 'auto':
+          if (!scrollToSection('auto-trade')) {
+            handleNavigate('/auto-trading');
+          }
+          break;
+        case 'history':
+          handleNavigate('/trade-history');
+          break;
+        case 'markets':
+          if (!scrollToSection('market-overview')) {
+            handleNavigate('/markets');
+          }
+          break;
+        case 'about':
+          if (!scrollToSection('about')) {
+            handleNavigate('/about');
+          }
+          break;
+        case 'contact':
+          handleNavigate('/contact');
+          break;
+        default:
+          break;
+      }
+    },
+    [closeDashMenu, handleNavigate, handleOpenPanel, scrollToSection],
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white">
@@ -1698,28 +1806,37 @@ const CryptoInvestmentPlatform = () => {
       >
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6" />
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleDashMenu}
+                  className="flex h-10 flex-col items-center justify-center gap-[1mm] rounded-lg border border-white/10 bg-white/5 px-2 text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                  aria-label="Open quick actions menu"
+                  aria-expanded={showDashMenu}
+                  aria-controls="dash-quick-actions"
+                >
+                  <span className="block h-[3px] w-8 rounded-full bg-white" />
+                  <span className="block h-[3px] w-8 rounded-full bg-white" />
+                  <span className="block h-[3px] w-8 rounded-full bg-white" />
+                </button>
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6" />
+                </div>
               </div>
-              <span className="text-xl font-bold">KryptoVault</span>
+              <span className="text-4xl md:text-5xl font-black tracking-wide">KryptoVault</span>
             </div>
 
-            <div className="hidden md:flex items-center gap-8">
-              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenPanel('market')}>
-                Markets
-              </button>
-              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenPanel('features')}>
-                Features
-              </button>
-              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleNavigate('/about')}>
-                About
-              </button>
-              <button type="button" className="hover:text-blue-400 transition" onClick={() => handleOpenPanel('security')}>
-                Security
-              </button>
-              {isAuthenticated ? (
+            <div className="hidden md:flex items-center gap-4 text-sm">
+              {isAuthenticated && (
                 <>
+                  <button
+                    type="button"
+                    className="px-3 py-2 border border-emerald-500 rounded-lg text-sm hover:bg-emerald-500/10 transition"
+                    onClick={() => handleOpenPanel('deposit')}
+                  >
+                    Deposit
+                  </button>
                   <button
                     type="button"
                     className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
@@ -1730,49 +1847,11 @@ const CryptoInvestmentPlatform = () => {
                   </button>
                   <button
                     type="button"
-                    className="px-4 py-2 border border-emerald-500 rounded-lg hover:bg-emerald-500/10 transition"
-                    onClick={() => handleOpenPanel('deposit')}
-                  >
-                    Deposit
-                  </button>
-                  <button
-                    type="button"
-                    className="px-4 py-2 border border-amber-500 rounded-lg hover:bg-amber-500/10 transition"
-                    onClick={() => handleOpenPanel('withdraw')}
-                  >
-                    Withdraw
-                  </button>
-                  <button
-                    type="button"
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition"
-                    onClick={openTradeSelector}
-                  >
-                    Trade
-                  </button>
-                  <button
-                    type="button"
                     className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white transition"
                     onClick={handleLogout}
                   >
                     <LogOut className="h-4 w-4" />
                     Logout
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="px-4 py-2 border border-blue-500 rounded-lg hover:bg-blue-500/10 transition"
-                    onClick={handleOpenSignInFlow}
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:shadow-lg hover:shadow-blue-500/50 transition"
-                    onClick={handleOpenSignupFlow}
-                  >
-                    Sign Up
                   </button>
                 </>
               )}
@@ -1787,20 +1866,15 @@ const CryptoInvestmentPlatform = () => {
         {mobileMenuOpen && (
           <div className="md:hidden bg-slate-900 border-t border-slate-800">
             <div className="px-6 py-4 space-y-4">
-              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenPanel('market')}>
-                Markets
-              </button>
-              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenPanel('features')}>
-                Features
-              </button>
-              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleNavigate('/about')}>
-                About
-              </button>
-              <button type="button" className="block w-full text-left hover:text-blue-400" onClick={() => handleOpenPanel('security')}>
-                Security
-              </button>
               {isAuthenticated ? (
                 <>
+                  <button
+                    type="button"
+                    className="w-full px-4 py-2 border border-emerald-500 rounded-lg text-sm"
+                    onClick={() => handleOpenPanel('deposit')}
+                  >
+                    Deposit
+                  </button>
                   <button
                     type="button"
                     className="flex w-full items-center justify-between rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-left text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
@@ -1808,61 +1882,82 @@ const CryptoInvestmentPlatform = () => {
                   >
                     <span className="flex items-center gap-2">
                       <Wallet className="h-4 w-4" />
-                      Current Balance
+                      Vault Balance
                     </span>
                     <span>{formatCurrency(userBalance)}</span>
                   </button>
                   <button
                     type="button"
-                    className="w-full px-4 py-2 border border-emerald-500 rounded-lg"
-                    onClick={() => handleOpenPanel('deposit')}
-                  >
-                    Deposit
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-2 border border-amber-500 rounded-lg"
-                    onClick={() => handleOpenPanel('withdraw')}
-                  >
-                    Withdraw
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"
-                    onClick={openTradeSelector}
-                  >
-                    Trade
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-2 text-left text-slate-400 hover:text-white"
+                    className="w-full px-4 py-2 text-left text-sm text-slate-400 hover:text-white"
                     onClick={handleLogout}
                   >
                     Logout
                   </button>
                 </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-2 border border-blue-500 rounded-lg"
-                    onClick={handleOpenSignInFlow}
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"
-                    onClick={handleOpenSignupFlow}
-                  >
-                    Sign Up
-                  </button>
-                </>
-              )}
+              ) : null}
             </div>
           </div>
         )}
       </nav>
+
+      {showDashMenu && (
+        <div
+          role="presentation"
+          aria-hidden="true"
+          className="fixed inset-0 z-[51] cursor-default bg-transparent"
+          onClick={closeDashMenu}
+        />
+      )}
+
+      <div
+        id="dash-quick-actions"
+        className={`fixed top-24 left-6 z-[52] w-56 rounded-2xl border border-slate-800/80 bg-slate-950/95 shadow-xl shadow-blue-500/20 backdrop-blur transition-all duration-300 ${showDashMenu ? 'translate-x-0 opacity-100' : '-translate-x-8 opacity-0 pointer-events-none'}`}
+      >
+        <div className="flex flex-col divide-y divide-slate-800/60 py-2">
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('withdraw')}
+          >
+            Withdraw
+          </button>
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('auto')}
+          >
+            Auto Trade
+          </button>
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('history')}
+          >
+            History
+          </button>
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('markets')}
+          >
+            Markets
+          </button>
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('about')}
+          >
+            About
+          </button>
+          <button
+            type="button"
+            className="w-full px-5 py-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-800/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+            onClick={() => handleDashMenuAction('contact')}
+          >
+            Contact
+          </button>
+        </div>
+      </div>
 
       <main className="pt-28">
         {isAuthenticated ? (
@@ -1889,190 +1984,228 @@ const CryptoInvestmentPlatform = () => {
         )}
 
         <section className="pt-4 pb-20 px-6" id="hero">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div className="space-y-6">
-              <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/30 rounded-full text-sm">
-                <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                <span>Trusted by 500K+ traders worldwide</span>
+          <div className="max-w-7xl mx-auto">
+            {isAuthenticated ? (
+              <div className="grid lg:grid-cols-2 gap-12 items-center">
+                <div className="space-y-6">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/30 rounded-full text-sm">
+                    <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                    <span>Trusted by 500K+ traders worldwide</span>
+                  </div>
+
+                  <h1 className="text-5xl lg:text-7xl font-bold leading-tight">
+                    Invest in the
+                    <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> Future </span>
+                    of Finance
+                  </h1>
+
+                  <p className="text-xl text-slate-300">
+                    Trade cryptocurrencies with confidence. Advanced tools, institutional-grade security, and 24/7 support for your investment journey.
+                  </p>
+
+                  <div className="flex flex-wrap gap-4">
+                    <button
+                      type="button"
+                      className="px-8 py-4 border border-slate-600 rounded-lg font-semibold hover:bg-slate-800 transition"
+                      onClick={handleWatchDemo}
+                    >
+                      Watch Demo
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-6 pt-4">
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-5 h-5 text-green-500" />
+                      <span className="text-sm text-slate-300">SEC Regulated</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-5 h-5 text-green-500" />
+                      <span className="text-sm text-slate-300">FDIC Insured</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-3xl blur-3xl opacity-30" />
+                  <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xl font-semibold">Live Markets</h3>
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">Live</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      {(['bitcoin', 'ethereum', 'solana'] as CryptoTab[]).map((crypto) => (
+                        <button
+                          key={crypto}
+                          onClick={() => setActiveTab(crypto)}
+                          className={`flex-1 px-4 py-2 rounded-lg capitalize transition ${activeTab === crypto ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                            }`}
+                        >
+                          {crypto}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex items-end justify-between">
+                        <div>
+                          <p className="text-sm text-slate-400 mb-1">Current Price</p>
+                          <p className="text-4xl font-bold">{formatCurrency(activeCrypto.price)}</p>
+                        </div>
+                        <div
+                          className={`flex items-center gap-1 px-3 py-1 rounded-lg ${activeCrypto.change >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                            }`}
+                        >
+                          {activeCrypto.change >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                          <span className="font-semibold">{formatPercentage(activeCrypto.change)}</span>
+                        </div>
+                      </div>
+
+                      <div className="h-32 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                        {heroLinePaths.path ? (
+                          <svg viewBox="0 0 320 120" width={320} height={120} role="img" aria-label="Hero market performance" className="h-full w-full">
+                            <defs>
+                              <linearGradient id="hero-line-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#4f46e5" stopOpacity={0.6} />
+                                <stop offset="100%" stopColor="#4f46e5" stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <path d={heroLinePaths.area} fill="url(#hero-line-gradient)" opacity={0.5} />
+                            <path d={heroLinePaths.path} fill="none" stroke="#a855f7" strokeWidth={2.5} strokeLinecap="round" />
+                          </svg>
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-xs text-slate-500">Trend data unavailable</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        className="flex-1 py-3 bg-green-500 hover:bg-green-600 rounded-lg font-semibold transition"
+                        onClick={() => handleHeroAction('buy')}
+                      >
+                        Buy
+                      </button>
+                      <button
+                        type="button"
+                        className="flex-1 py-3 bg-red-500 hover:bg-red-600 rounded-lg font-semibold transition"
+                        onClick={() => handleHeroAction('sell')}
+                      >
+                        Sell
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
+            ) : (
+              <div className="max-w-3xl mx-auto text-center space-y-6">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/30 rounded-full text-sm justify-center">
+                  <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                  <span>Automated crypto investing made simple</span>
+                </div>
 
-              <h1 className="text-5xl lg:text-7xl font-bold leading-tight">
-                Invest in the
-                <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> Future </span>
-                of Finance
-              </h1>
+                <h1 className="text-4xl lg:text-5xl font-bold leading-tight">
+                  Unlock Pro Trading Tools in Under a Minute
+                </h1>
 
-              <p className="text-xl text-slate-300">
-                Trade cryptocurrencies with confidence. Advanced tools, institutional-grade security, and 24/7 support for your investment journey.
-              </p>
+                <p className="text-lg text-slate-300">
+                  Create your vault, top up funds, and deploy managed strategies without distractions. Log in to see live markets, trading bots, and your personalized dashboard.
+                </p>
 
-              <div className="flex flex-wrap gap-4">
-                {!isAuthenticated && (
+                <div className="flex flex-wrap justify-center gap-4">
                   <button
                     type="button"
-                    className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-semibold hover:shadow-xl hover:shadow-blue-500/50 transition transform hover:scale-105"
+                    className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-semibold hover:shadow-xl hover:shadow-blue-500/40 transition transform hover:scale-105"
                     onClick={handleOpenSignInFlow}
                   >
                     Log In
                     <ChevronRight className="inline w-5 h-5 ml-2" />
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="px-8 py-4 border border-slate-600 rounded-lg font-semibold hover:bg-slate-800 transition"
-                  onClick={handleWatchDemo}
-                >
-                  Watch Demo
-                </button>
-              </div>
-
-              {!isAuthenticated && (
-                <p className="text-sm text-slate-400">
-                  Don't have an account yet?
                   <button
                     type="button"
-                    className="ml-2 inline-flex items-center text-blue-300 underline-offset-2 hover:text-blue-200 hover:underline"
+                    className="px-8 py-4 border border-slate-600 rounded-lg font-semibold hover:bg-slate-800 transition"
                     onClick={handleOpenSignupFlow}
                   >
-                    Sign Up
-                  </button>
-                </p>
-              )}
-
-              <div className="flex items-center gap-6 pt-4">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-green-500" />
-                  <span className="text-sm text-slate-300">SEC Regulated</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Lock className="w-5 h-5 text-green-500" />
-                  <span className="text-sm text-slate-300">FDIC Insured</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-3xl blur-3xl opacity-30" />
-              <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-semibold">Live Markets</h3>
-                  <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">Live</span>
-                </div>
-
-                <div className="flex gap-2">
-                  {(['bitcoin', 'ethereum', 'solana'] as CryptoTab[]).map((crypto) => (
-                    <button
-                      key={crypto}
-                      onClick={() => setActiveTab(crypto)}
-                      className={`flex-1 px-4 py-2 rounded-lg capitalize transition ${
-                        activeTab === crypto ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                      }`}
-                    >
-                      {crypto}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <p className="text-sm text-slate-400 mb-1">Current Price</p>
-                      <p className="text-4xl font-bold">{formatCurrency(activeCrypto.price)}</p>
-                    </div>
-                    <div
-                      className={`flex items-center gap-1 px-3 py-1 rounded-lg ${
-                        activeCrypto.change >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                      }`}
-                    >
-                      {activeCrypto.change >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                      <span className="font-semibold">{formatPercentage(activeCrypto.change)}</span>
-                    </div>
-                  </div>
-
-                  <div className="h-32 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
-                    {heroLinePaths.path ? (
-                      <svg viewBox="0 0 320 120" width={320} height={120} role="img" aria-label="Hero market performance" className="h-full w-full">
-                        <defs>
-                          <linearGradient id="hero-line-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#4f46e5" stopOpacity={0.6} />
-                            <stop offset="100%" stopColor="#4f46e5" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <path d={heroLinePaths.area} fill="url(#hero-line-gradient)" opacity={0.5} />
-                        <path d={heroLinePaths.path} fill="none" stroke="#a855f7" strokeWidth={2.5} strokeLinecap="round" />
-                      </svg>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-xs text-slate-500">Trend data unavailable</div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    className="flex-1 py-3 bg-green-500 hover:bg-green-600 rounded-lg font-semibold transition"
-                    onClick={() => handleHeroAction('buy')}
-                  >
-                    Buy
-                  </button>
-                  <button
-                    type="button"
-                    className="flex-1 py-3 bg-red-500 hover:bg-red-600 rounded-lg font-semibold transition"
-                    onClick={() => handleHeroAction('sell')}
-                  >
-                    Sell
+                    Create Account
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        </section>
 
-        <section className="py-16 px-6 bg-slate-900/50" id="stats">
-          <div className="max-w-7xl mx-auto">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
-              {stats.map((stat) => (
-                <div key={stat.label} className="text-center space-y-2">
-                  <p className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                    {stat.value}
-                  </p>
-                  <p className="text-slate-400">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="features" className="py-20 px-6">
-          <div className="max-w-7xl mx-auto">
-            <div className="text-center mb-16 space-y-4">
-              <h2 className="text-4xl lg:text-5xl font-bold">
-                Why Choose
-                <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> KryptoVault</span>
-              </h2>
-              <p className="text-xl text-slate-300 max-w-2xl mx-auto">
-                Experience the most advanced crypto investment platform with features designed for both beginners and professionals
-              </p>
-            </div>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {features.map((feature) => (
-                <div
-                  key={feature.title}
-                  className="group p-8 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 hover:-translate-y-1"
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold text-blue-200/90 hover:text-blue-200 hover:underline underline-offset-4"
+                  onClick={handleWatchDemo}
                 >
-                  <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition">
-                    <feature.icon className="w-7 h-7" />
+                  <Play className="w-4 h-4" />
+                  Preview the platform
+                </button>
+
+                <div className="flex flex-wrap justify-center gap-6 pt-4 text-sm text-slate-400">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-emerald-400" />
+                    <span>Institutional security</span>
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
-                  <p className="text-slate-400">{feature.desc}</p>
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-300" />
+                    <span>High-yield automation</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Headphones className="w-4 h-4 text-blue-300" />
+                    <span>24/7 desk support</span>
+                  </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         </section>
+
+        {isAuthenticated && (
+          <section className="py-16 px-6 bg-slate-900/50" id="stats">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
+                {stats.map((stat) => (
+                  <div key={stat.label} className="text-center space-y-2">
+                    <p className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                      {stat.value}
+                    </p>
+                    <p className="text-slate-400">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {isAuthenticated && (
+          <section id="features" className="py-20 px-6">
+            <div className="max-w-7xl mx-auto">
+              <div className="text-center mb-16 space-y-4">
+                <h2 className="text-4xl lg:text-5xl font-bold">
+                  Why Choose
+                  <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent"> KryptoVault</span>
+                </h2>
+                <p className="text-xl text-slate-300 max-w-2xl mx-auto">
+                  Experience the most advanced crypto investment platform with features designed for both beginners and professionals
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {features.map((feature) => (
+                  <div
+                    key={feature.title}
+                    className="group p-8 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 hover:-translate-y-1"
+                  >
+                    <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition">
+                      <feature.icon className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
+                    <p className="text-slate-400">{feature.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {isAuthenticated && (
           <>
@@ -2125,7 +2258,7 @@ const CryptoInvestmentPlatform = () => {
                   </li>
                   <li className="flex items-start gap-3">
                     <div className="mt-1 h-3 w-3 rounded-full bg-emerald-400" />
-                    <p className="text-slate-200"><strong>Step 2:</strong> Send the amount you wish to allocate. Minimum starting capital remains <span className="font-semibold text-emerald-300">$500</span>.</p>
+                      <p className="text-slate-200"><strong>Step 2:</strong> Send the amount you wish to allocate. Minimum starting capital remains <span className="font-semibold text-emerald-300">{formatCurrency(MIN_TRADE_BALANCE)}</span>.</p>
                   </li>
                   <li className="flex items-start gap-3">
                     <div className="mt-1 h-3 w-3 rounded-full bg-emerald-400" />
@@ -2303,7 +2436,7 @@ const CryptoInvestmentPlatform = () => {
                       Create Free Account
                       <ChevronRight className="inline w-5 h-5 ml-2" />
                     </button>
-                    <p className="text-sm opacity-75">No credit card required • $500 minimum starting capital</p>
+                    <p className="text-sm opacity-75">No credit card required • {formatCurrency(MIN_TRADE_BALANCE)} minimum starting capital</p>
                   </div>
                 </div>
               </div>
@@ -2700,7 +2833,7 @@ const CryptoInvestmentPlatform = () => {
                   </div>
                   <h3 className="text-3xl font-bold text-white">Fund Your Vault</h3>
                   <p className="text-slate-300">
-                    Select the asset you want to credit. Minimum capital is $500 to unlock the trading algorithms and automated yield engines.
+                    Select the asset you want to credit. Minimum capital is {formatCurrency(MIN_TRADE_BALANCE)} to unlock the trading algorithms and automated yield engines.
                   </p>
                 </div>
 
@@ -3008,14 +3141,14 @@ const CryptoInvestmentPlatform = () => {
                     className="rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-green-400 hover:to-emerald-400"
                     onClick={() => handleStrategyAction('buy', selectedCoin)}
                   >
-                    Buy Only
+                    Buy
                   </button>
                   <button
                     type="button"
                     className="rounded-xl bg-gradient-to-r from-red-500 to-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:from-red-400 hover:to-orange-400"
                     onClick={() => handleStrategyAction('sell', selectedCoin)}
                   >
-                    Sell Only
+                    Sell
                   </button>
                   <button
                     type="button"
