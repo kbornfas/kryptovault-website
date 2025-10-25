@@ -1,3 +1,4 @@
+import { isSuperAdmin } from '@/config/admin';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -39,11 +40,15 @@ const Login = () => {
     if (!validateForm()) return;
 
     try {
-      await login(formData.email, formData.password);
-      navigate('/invest');
-    } catch (error) {
+      const authUser = await login(formData.email, formData.password);
+      const destination = authUser.role === 'ADMIN' && isSuperAdmin(authUser.email) ? '/admin' : '/';
+      navigate(destination, { replace: true });
+    } catch (error: any) {
+      const description = error?.response?.data?.message;
       setErrors({
-        general: 'Invalid email or password'
+        general: Array.isArray(description)
+          ? description[0]
+          : description || 'Invalid email or password',
       });
     }
   };
@@ -94,7 +99,21 @@ const Login = () => {
           >
             Login
           </button>
+          <div className="mt-2 text-center text-sm">
+            <Link to="/reset-password" className="text-purple-400 hover:text-purple-300">
+              Forgot your password? Reset it here.
+            </Link>
+          </div>
+          {errors.general && (
+            <p className="text-red-400 text-sm text-center">{errors.general}</p>
+          )}
         </form>
+        <div className="mt-6 rounded-lg border border-indigo-500/40 bg-indigo-950/40 p-4 text-sm text-indigo-100">
+          <p className="font-semibold text-indigo-50">QA Test Account</p>
+          <p className="mt-2 leading-relaxed">
+            Use <span className="font-mono">vip@kryptovault.demo</span> with password <span className="font-mono">TraderPass123!</span> to sign in. This demo wallet is preloaded with a $5,000 balance.
+          </p>
+        </div>
         <p className="mt-4 text-center">
           Don't have an account?{' '}
           <Link to="/signup" className="text-purple-400 hover:text-purple-300">

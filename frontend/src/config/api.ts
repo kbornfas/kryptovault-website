@@ -1,16 +1,16 @@
-// API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// API configuration
+export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-// API endpoints will automatically use this base URL
+// Centralized endpoints for reuse throughout the app
 export const API_ENDPOINTS = {
-  AUTH: '/api/auth',
-  USERS: '/api/users',
-  INVESTMENTS: '/api/investments',
-  PLANS: '/api/plans',
-  TRANSACTIONS: '/api/transactions',
-  NOTIFICATIONS: '/api/notifications',
-  PAYMENTS: '/api/payments',
-  ADMIN: '/api/admin',
+  AUTH: '/auth',
+  USERS: '/users',
+  INVESTMENTS: '/investments',
+  PLANS: '/plans',
+  TRANSACTIONS: '/transactions',
+  NOTIFICATIONS: '/notifications',
+  PAYMENTS: '/payments',
+  ADMIN: '/admin',
+  TRADES: '/trades',
+  AUTOMATION: '/automation',
 };
-
-console.log('API Base URL:', API_BASE_URL);

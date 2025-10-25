@@ -1,8 +1,11 @@
-import { Link } from 'react-router-dom';
+import { isSuperAdmin } from '@/config/admin';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
+  const { pathname } = useLocation();
+  const showLinks = pathname !== '/about';
 
   return (
     <nav className="flex justify-between items-center px-8 py-4 bg-indigo-900 shadow-md">
@@ -10,11 +13,18 @@ export default function Navbar() {
         KryptoVault
       </Link>
       <div className="flex items-center">
-        <ul className="flex gap-6 text-gray-200 mr-8">
-         <li><Link to="/" className="hover:text-purple-400">Home</Link></li>
-         <li><Link to="/about" className="hover:text-purple-400">About</Link></li>
-         <li><Link to="/contact" className="hover:text-purple-400">Contact</Link></li>
-        </ul>
+        {showLinks && (
+          <ul className="flex gap-6 text-gray-200 mr-8">
+            <li><Link to="/" className="hover:text-purple-400">Home</Link></li>
+            <li><Link to="/about" className="hover:text-purple-400">About</Link></li>
+            <li><Link to="/contact" className="hover:text-purple-400">Contact</Link></li>
+            <li><Link to="/auto-trading" className="hover:text-purple-400">Auto Trading</Link></li>
+            <li><Link to="/trade-history" className="hover:text-purple-400">Trade History</Link></li>
+            {user?.role === 'ADMIN' && isSuperAdmin(user.email) && (
+              <li><Link to="/admin" className="hover:text-purple-400">Admin</Link></li>
+            )}
+          </ul>
+        )}
         <div className="flex gap-4 items-center">
           {user ? (
             <>

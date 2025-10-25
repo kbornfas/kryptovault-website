@@ -1,3 +1,5 @@
+import { API_ENDPOINTS } from '@/config/api';
+import apiClient from '@/lib/apiClient';
 import {
   Badge,
   Box,
@@ -14,13 +16,35 @@ import {
   Tr,
   useColorModeValue
 } from '@chakra-ui/react';
-import axios from 'axios';
 import { useQuery } from 'react-query';
 
+interface DashboardStatsResponse {
+  totalUsers: number;
+  activeInvestments: number;
+  totalInvestmentAmount: number;
+  pendingKycCount: number;
+  totalTransactionAmount?: number;
+  recentTransactions: Array<{
+    id: string;
+    type: 'DEPOSIT' | 'WITHDRAWAL';
+    amount: number;
+    status: 'PENDING' | 'COMPLETED' | 'FAILED';
+    createdAt: string;
+    user: {
+      email: string;
+    };
+  }>;
+}
+
 const DashboardStats = () => {
-  const { data: stats, isLoading } = useQuery('adminStats', () =>
-    axios.get('/api/admin/dashboard').then((res) => res.data)
-  );
+  const {
+    data: stats,
+    isLoading,
+    isError,
+  } = useQuery<DashboardStatsResponse>(['admin-dashboard'], async () => {
+    const response = await apiClient.get<DashboardStatsResponse>(`${API_ENDPOINTS.ADMIN}/dashboard`);
+    return response.data;
+  });
 
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
@@ -28,6 +52,16 @@ const DashboardStats = () => {
   if (isLoading) {
     return <Box>Loading...</Box>;
   }
+
+  if (isError || !stats) {
+    return <Box color="red.400">Unable to load dashboard metrics.</Box>;
+  }
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(value ?? 0);
 
   return (
     <Box>
@@ -42,7 +76,7 @@ const DashboardStats = () => {
         </Stat>
         <Stat p={4} bg={bgColor} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
           <StatLabel>Total Investment Amount</StatLabel>
-          <StatNumber>${stats.totalInvestmentAmount}</StatNumber>
+          <StatNumber>{formatCurrency(stats.totalInvestmentAmount)}</StatNumber>
         </Stat>
         <Stat p={4} bg={bgColor} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
           <StatLabel>Pending KYC</StatLabel>
