@@ -136,19 +136,6 @@ type LiveTradeSession = {
   startedAt: string;
 };
 
-type TradeRunSummary = {
-  id: string;
-  strategy: 'manual' | 'auto';
-  symbol: string;
-  coinId: string;
-  lotUnits: number;
-  stakeAmount: number;
-  realizedPnL: number;
-  firstTimestamp: string;
-  lastTimestamp: string;
-  actions: TradeExecution[];
-};
-
 type LiveStreamFinalizeResult = {
   sessionId: string;
   finalPrice: number;
@@ -221,20 +208,6 @@ const createFallbackCoin = (id: CryptoTab, meta: CryptoMeta): MarketCoin => {
   };
 };
 
-const resolveDepositAsset = (coin: MarketCoin): DepositAssetKey => {
-  const symbol = coin.symbol.toLowerCase();
-  if (symbol.includes('btc')) {
-    return 'btc';
-  }
-  if (symbol.includes('eth')) {
-    return 'eth';
-  }
-  if (symbol.includes('sol')) {
-    return 'sol';
-  }
-  return 'usdt';
-};
-
 const formatCurrency = (value: number) =>
   `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -253,29 +226,6 @@ const MIN_TRADE_BALANCE = 10;
 const MIN_LOT_NOTIONAL = 10;
 const AUTO_PROFIT_TARGET_MULTIPLIER = 3;
 const AUTO_MAX_CYCLES = 12;
-
-const LEDGER_CATEGORY_META: Record<BalanceLedgerCategory, { label: string; badgeClass: string }> = {
-  'trade-debit': {
-    label: 'Lot Debit',
-    badgeClass: 'border-red-500/40 bg-red-500/10 text-red-200',
-  },
-  profit: {
-    label: 'Profit',
-    badgeClass: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
-  },
-  deposit: {
-    label: 'Deposit',
-    badgeClass: 'border-blue-500/40 bg-blue-500/10 text-blue-200',
-  },
-  withdrawal: {
-    label: 'Withdrawal',
-    badgeClass: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
-  },
-  system: {
-    label: 'System',
-    badgeClass: 'border-slate-500/40 bg-slate-500/10 text-slate-200',
-  },
-};
 
 const DEPOSIT_ADDRESSES = {
   usdt: 'TVKQpGsENufZDfB1ipVVjzt7KvXzhRez43',
@@ -352,11 +302,6 @@ type WithdrawalMethod = DepositAssetKey;
 type WithdrawalFormState = {
   amount: string;
   destination: string;
-};
-
-type DepositFormState = {
-  amount: string;
-  memo: string;
 };
 
 const WITHDRAWAL_OPTIONS: Record<WithdrawalMethod, { label: string; description: string; placeholder: string }> = {
@@ -522,8 +467,6 @@ const CryptoInvestmentPlatform = () => {
   const [selectedCoin, setSelectedCoin] = useState<MarketCoin | null>(null);
   const [pendingAction, setPendingAction] = useState<'buy' | 'sell' | 'auto' | 'view' | null>(null);
   const [copiedAsset, setCopiedAsset] = useState<DepositAssetKey | null>(null);
-  const [depositForm, setDepositForm] = useState<DepositFormState>({ amount: '', memo: '' });
-  const [depositFeedback, setDepositFeedback] = useState<string | null>(null);
   const [tradeJournal, setTradeJournal] = useState<TradeExecution[]>([]);
   const [tradeFeedback, setTradeFeedback] = useState<string | null>(null);
   const [showTradeSelector, setShowTradeSelector] = useState(false);
@@ -598,8 +541,6 @@ const CryptoInvestmentPlatform = () => {
       if (panel === 'deposit') {
         setSelectedDepositAsset('usdt');
         setCopiedAsset(null);
-        setDepositForm({ amount: '', memo: '' });
-        setDepositFeedback(null);
       }
       if (panel === 'withdraw') {
         setSelectedWithdrawalMethod(options?.presetWithdrawalMethod ?? 'usdt');
@@ -613,8 +554,6 @@ const CryptoInvestmentPlatform = () => {
   const handleClosePanel = useCallback(() => {
     setActivePanel(null);
     setWithdrawFeedback(null);
-    setDepositFeedback(null);
-    setDepositForm({ amount: '', memo: '' });
   }, []);
 
   const closeDashMenu = useCallback(() => {
@@ -1914,7 +1853,7 @@ const CryptoInvestmentPlatform = () => {
 
     const intervalId = window.setInterval(() => {
       currentPoint += 1;
-      setChartIndex((prev) => {
+      setChartIndex(() => {
         const next = Math.min(currentPoint, totalPoints);
         if (next >= totalPoints) {
           window.clearInterval(intervalId);
@@ -3763,6 +3702,13 @@ const CryptoInvestmentPlatform = () => {
                     onClick={() => handleStrategyAction('auto', selectedCoin)}
                   >
                     Activate Auto Robot
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-slate-700 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:border-blue-400/60 hover:text-blue-100"
+                    onClick={openTradeSelector}
+                  >
+                    Browse Markets
                   </button>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-950/90 p-4 text-xs text-slate-400">

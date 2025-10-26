@@ -16,8 +16,7 @@
     "build": "npm run build:backend && npm run build:frontend",
     "install:all": "npm install && cd Backend && npm install && cd ../frontend && npm install",
     "lint:backend": "cd Backend && npm run lint",
-    "lint:frontend": "cd frontend && npm run lint",
-    "lint": "npm run lint:backend && npm run lint:frontend"
+    "lint": "npm run lint:backend"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

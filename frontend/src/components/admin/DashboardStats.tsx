@@ -99,25 +99,25 @@ const DashboardStats = () => {
             </Tr>
           </Thead>
           <Tbody>
-            {stats.recentTransactions.map((tx: any) => (
-              <Tr key={tx.id}>
-                <Td>{tx.user.email}</Td>
-                <Td>{tx.type}</Td>
-                <Td>${tx.amount}</Td>
+            {stats.recentTransactions.map((transaction) => (
+              <Tr key={transaction.id}>
+                <Td>{transaction.user.email}</Td>
+                <Td>{transaction.type}</Td>
+                <Td>{formatCurrency(transaction.amount)}</Td>
                 <Td>
                   <Badge
                     colorScheme={
-                      tx.status === 'COMPLETED'
+                      transaction.status === 'COMPLETED'
                         ? 'green'
-                        : tx.status === 'PENDING'
-                        ? 'yellow'
-                        : 'red'
+                        : transaction.status === 'PENDING'
+                          ? 'yellow'
+                          : 'red'
                     }
                   >
-                    {tx.status}
+                    {transaction.status}
                   </Badge>
                 </Td>
-                <Td>{new Date(tx.createdAt).toLocaleDateString()}</Td>
+                <Td>{new Date(transaction.createdAt).toLocaleDateString()}</Td>
               </Tr>
             ))}
           </Tbody>

@@ -1,4 +1,4 @@
-import { isSuperAdmin } from '@/config/admin';
+import { hasAdminAccess } from '@/config/admin';
 import { useAuth } from '@/context/AuthContext';
 import { Navigate, Outlet } from 'react-router-dom';
 
@@ -17,7 +17,7 @@ const AdminRoute = () => {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role !== 'ADMIN' || !isSuperAdmin(user.email)) {
+  if (!hasAdminAccess(user.email)) {
     return <Navigate to="/" replace />;
   }
 

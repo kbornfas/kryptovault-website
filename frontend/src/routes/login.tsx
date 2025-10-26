@@ -1,4 +1,5 @@
-import { isSuperAdmin } from '@/config/admin';
+import { hasAdminAccess } from '@/config/admin';
+import { isAxiosError } from 'axios';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -41,14 +42,22 @@ const Login = () => {
 
     try {
       const authUser = await login(formData.email, formData.password);
-      const destination = authUser.role === 'ADMIN' && isSuperAdmin(authUser.email) ? '/admin' : '/';
+      const destination = hasAdminAccess(authUser.email) ? '/admin' : '/';
       navigate(destination, { replace: true });
-    } catch (error: any) {
-      const description = error?.response?.data?.message;
+    } catch (cause) {
+      let message = 'Invalid email or password';
+      if (isAxiosError<{ message?: string | string[] }>(cause)) {
+        const description = cause.response?.data?.message;
+        if (Array.isArray(description) && description.length > 0) {
+          message = description[0];
+        } else if (typeof description === 'string' && description.trim()) {
+          message = description;
+        }
+      } else if (cause instanceof Error && cause.message.trim()) {
+        message = cause.message;
+      }
       setErrors({
-        general: Array.isArray(description)
-          ? description[0]
-          : description || 'Invalid email or password',
+        general: message,
       });
     }
   };

@@ -54,9 +54,9 @@ const App: React.FC = () => {
               <Route path="/reset-password" element={<ResetPasswordRoute />} />
               <Route path="/trade-history" element={<TradeHistoryRoute />} />
               <Route path="/trade-execution" element={<TradeExecutionRoute />} />
-            </Route>
-            <Route element={<AdminRoute />}>
-              <Route path="/admin" element={<AdminDashboard />} />
+              <Route element={<AdminRoute />}>
+                <Route path="admin" element={<AdminDashboard />} />
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

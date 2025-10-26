@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '@/config/api';
-import axios from 'axios';
+import axios, { AxiosHeaders } from 'axios';
 
 const API_ROOT = API_BASE_URL.replace(/\/$/, '');
 
@@ -11,13 +11,15 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
-    if (config.headers && typeof (config.headers as any).set === 'function') {
-      (config.headers as any).set('Authorization', `Bearer ${token}`);
+    if (config.headers) {
+      const headers =
+        config.headers instanceof AxiosHeaders
+          ? config.headers
+          : new AxiosHeaders(config.headers);
+      headers.set('Authorization', `Bearer ${token}`);
+      config.headers = headers;
     } else {
-      config.headers = {
-        ...config.headers,
-        Authorization: `Bearer ${token}`,
-      } as typeof config.headers;
+      config.headers = new AxiosHeaders({ Authorization: `Bearer ${token}` });
     }
   }
   return config;

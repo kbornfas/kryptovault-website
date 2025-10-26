@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,6 +19,20 @@ const SignUp = () => {
       setSelectedPlan(plan);
     }
   }, []);
+
+  const formattedPlan = useMemo(() => {
+    if (!selectedPlan) {
+      return null;
+    }
+    const normalized = selectedPlan.replace(/[-_]+/g, ' ').trim();
+    if (!normalized) {
+      return null;
+    }
+    return normalized
+      .split(' ')
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+      .join(' ');
+  }, [selectedPlan]);
   const [errors, setErrors] = useState<{
     name?: string;
     email?: string;
@@ -62,11 +76,11 @@ const SignUp = () => {
 
     try {
       await signup(formData.name, formData.email, formData.password);
-      localStorage.removeItem('selectedPlan'); // Clear the selected plan
+      localStorage.removeItem('selectedPlan');
       navigate('/');
-    } catch (error) {
+    } catch (cause) {
       setErrors({
-        general: 'Failed to create account'
+        general: cause instanceof Error ? cause.message : 'Failed to create account'
       });
     }
   };
@@ -82,6 +96,11 @@ const SignUp = () => {
     <div className="container mx-auto px-4 py-8 flex justify-center items-center min-h-[80vh]">
       <div className="w-full max-w-md bg-indigo-900/30 p-8 rounded-lg shadow-lg">
         <h1 className="text-3xl font-bold mb-6 text-center">Sign Up</h1>
+        {formattedPlan && (
+          <div className="mb-6 rounded-lg border border-purple-500/40 bg-purple-500/10 px-4 py-3 text-sm text-purple-100">
+            Locked in from pricing: <span className="font-semibold text-purple-50">{formattedPlan}</span>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="name" className="block text-sm font-medium mb-1">
@@ -96,6 +115,7 @@ const SignUp = () => {
               className="w-full px-3 py-2 bg-indigo-900/50 rounded-lg focus:ring-2 focus:ring-purple-400 outline-none"
               required
             />
+            {errors.name && <p className="mt-1 text-xs text-red-400">{errors.name}</p>}
           </div>
           <div>
             <label htmlFor="email" className="block text-sm font-medium mb-1">
@@ -110,6 +130,7 @@ const SignUp = () => {
               className="w-full px-3 py-2 bg-indigo-900/50 rounded-lg focus:ring-2 focus:ring-purple-400 outline-none"
               required
             />
+            {errors.email && <p className="mt-1 text-xs text-red-400">{errors.email}</p>}
           </div>
           <div>
             <label htmlFor="password" className="block text-sm font-medium mb-1">
@@ -124,6 +145,7 @@ const SignUp = () => {
               className="w-full px-3 py-2 bg-indigo-900/50 rounded-lg focus:ring-2 focus:ring-purple-400 outline-none"
               required
             />
+            {errors.password && <p className="mt-1 text-xs text-red-400">{errors.password}</p>}
           </div>
           <div>
             <label htmlFor="confirmPassword" className="block text-sm font-medium mb-1">
@@ -138,6 +160,7 @@ const SignUp = () => {
               className="w-full px-3 py-2 bg-indigo-900/50 rounded-lg focus:ring-2 focus:ring-purple-400 outline-none"
               required
             />
+            {errors.confirmPassword && <p className="mt-1 text-xs text-red-400">{errors.confirmPassword}</p>}
           </div>
           <button
             type="submit"
@@ -145,6 +168,7 @@ const SignUp = () => {
           >
             Sign Up
           </button>
+          {errors.general && <p className="text-center text-sm text-red-400">{errors.general}</p>}
         </form>
         <p className="mt-4 text-center">
           Already have an account?{' '}

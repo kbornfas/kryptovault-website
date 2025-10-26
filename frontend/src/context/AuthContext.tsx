@@ -51,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsedUser = JSON.parse(storedUser) as AuthUser;
         setUser(parsedUser);
-      } catch (error) {
+      } catch {
         localStorage.removeItem(USER_STORAGE_KEY);
       }
     }
@@ -83,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await apiClient.get<AuthUser>(`${API_ENDPOINTS.AUTH}/me`);
       setUser(response.data);
       persistSession(response.data);
-    } catch (error) {
+    } catch {
       setUser(null);
       persistSession(null, null);
       queryClient.clear();

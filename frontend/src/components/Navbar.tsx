@@ -1,4 +1,4 @@
-import { isSuperAdmin } from '@/config/admin';
+import { hasAdminAccess } from '@/config/admin';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,7 +20,7 @@ export default function Navbar() {
             <li><Link to="/contact" className="hover:text-purple-400">Contact</Link></li>
             <li><Link to="/auto-trading" className="hover:text-purple-400">Auto Trading</Link></li>
             <li><Link to="/trade-history" className="hover:text-purple-400">Trade History</Link></li>
-            {user?.role === 'ADMIN' && isSuperAdmin(user.email) && (
+            {user && hasAdminAccess(user.email) && (
               <li><Link to="/admin" className="hover:text-purple-400">Admin</Link></li>
             )}
           </ul>

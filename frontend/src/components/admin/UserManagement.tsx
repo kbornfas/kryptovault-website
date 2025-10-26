@@ -16,6 +16,7 @@ import {
   useColorModeValue,
   useToast,
 } from '@chakra-ui/react';
+import { isAxiosError } from 'axios';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 
@@ -63,6 +64,16 @@ const UserManagement = () => {
     },
   );
 
+  const resolveErrorMessage = (error: unknown) => {
+    if (isAxiosError<{ message?: string }>(error)) {
+      const message = error.response?.data?.message;
+      if (typeof message === 'string' && message.trim()) {
+        return message;
+      }
+    }
+    return 'Please try again later.';
+  };
+
   const updateKycStatus = useMutation<unknown, unknown, UpdateKycParams>(
     ({ userId, status }) =>
       apiClient.put(`${API_ENDPOINTS.ADMIN}/users/${userId}/kyc`, { status }),
@@ -75,10 +86,10 @@ const UserManagement = () => {
           duration: 3000,
         });
       },
-      onError: (error: any) => {
+      onError: (error: unknown) => {
         toast({
           title: 'Unable to update KYC status',
-          description: error?.response?.data?.message || 'Please try again later.',
+          description: resolveErrorMessage(error),
           status: 'error',
           duration: 4000,
         });

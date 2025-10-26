@@ -16,6 +16,7 @@ import {
   useColorModeValue,
   useToast
 } from '@chakra-ui/react';
+import { isAxiosError } from 'axios';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 
 interface Transaction {
@@ -52,6 +53,16 @@ const TransactionManagement = () => {
     },
   );
 
+  const resolveErrorMessage = (error: unknown) => {
+    if (isAxiosError<{ message?: string }>(error)) {
+      const message = error.response?.data?.message;
+      if (typeof message === 'string' && message.trim()) {
+        return message;
+      }
+    }
+    return 'Please try again later.';
+  };
+
   const updateTransactionStatus = useMutation(
     ({ transactionId, status }: { transactionId: string; status: Transaction['status'] }) =>
       apiClient.put(`${API_ENDPOINTS.ADMIN}/transactions/${transactionId}/status`, { status }),
@@ -64,10 +75,10 @@ const TransactionManagement = () => {
           duration: 3000,
         });
       },
-      onError: (error: any) => {
+      onError: (error: unknown) => {
         toast({
           title: 'Unable to update transaction',
-          description: error?.response?.data?.message || 'Please try again later.',
+          description: resolveErrorMessage(error),
           status: 'error',
         });
       },

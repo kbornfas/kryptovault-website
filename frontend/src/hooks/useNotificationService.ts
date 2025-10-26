@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 
@@ -12,16 +12,26 @@ interface Notification {
 
 export const useNotificationService = () => {
   const { user } = useAuth();
-  let socket: Socket | null = null;
+  const socketRef = useRef<Socket | null>(null);
 
   const connect = useCallback(() => {
     if (!user) return;
 
-    socket = io('http://localhost:3000/notifications', {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
+    socketRef.current = io('http://localhost:3000/notifications', {
       auth: {
         userId: user.id,
       },
     });
+
+    const socket = socketRef.current;
+    if (!socket) {
+      return;
+    }
 
     socket.on('connect', () => {
       console.log('Connected to notification service');
@@ -41,9 +51,9 @@ export const useNotificationService = () => {
     });
 
     return () => {
-      if (socket) {
-        socket.disconnect();
-        socket = null;
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
       }
     };
   }, [user]);
