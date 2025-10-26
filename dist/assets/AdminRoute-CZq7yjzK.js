@@ -1,0 +1,1 @@
+import{a,j as e,P as r,Q as i}from"./index-BvOHPX48.js";const o=()=>{const{user:t,loading:s}=a();return s?e.jsx("div",{className:"flex justify-center items-center min-h-screen bg-gray-900 text-white",children:"Loading dashboard..."}):t?t.role!=="ADMIN"?e.jsx(r,{to:"/",replace:!0}):e.jsx(i,{}):e.jsx(r,{to:"/login",replace:!0})};export{o as default};
