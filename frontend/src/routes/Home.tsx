@@ -115,6 +115,64 @@ type BalanceLedgerEntry = {
   category: BalanceLedgerCategory;
 };
 
+type LiveTradeStatus = 'active' | 'closing' | 'closed';
+
+type LiveTradeSession = {
+  id: string;
+  referenceId: string;
+  coinId: string;
+  coinName: string;
+  symbol: string;
+  strategy: 'manual' | 'auto';
+  action: 'buy' | 'sell';
+  entryPrice: number;
+  units: number;
+  allocated: number;
+  currentPrice: number;
+  currentPnL: number;
+  lastAppliedPnL: number;
+  currentBalance: number;
+  status: LiveTradeStatus;
+  startedAt: string;
+};
+
+type TradeRunSummary = {
+  id: string;
+  strategy: 'manual' | 'auto';
+  symbol: string;
+  coinId: string;
+  lotUnits: number;
+  stakeAmount: number;
+  realizedPnL: number;
+  firstTimestamp: string;
+  lastTimestamp: string;
+  actions: TradeExecution[];
+};
+
+type LiveStreamFinalizeResult = {
+  sessionId: string;
+  finalPrice: number;
+  finalPnL: number;
+  balanceAfterPnL: number;
+};
+
+type LiveStreamConfig = {
+  id: string;
+  referenceId: string;
+  coin: MarketCoin;
+  strategy: 'manual' | 'auto';
+  action: 'buy' | 'sell';
+  entryPrice: number;
+  units: number;
+  allocated: number;
+  startedAt: string;
+  initialBalance: number;
+  tickMs?: number;
+  autoCloseInMs?: number;
+  onBalanceUpdate?: (balance: number) => void;
+  onComplete?: (result: LiveStreamFinalizeResult) => void;
+};
+
 type ActivePanel = 'market' | 'features' | 'security' | 'deposit' | 'withdraw';
 
 const heroDefaults: Record<CryptoTab, CryptoMeta> = {
@@ -481,6 +539,21 @@ const CryptoInvestmentPlatform = () => {
   const [showTradeSummary, setShowTradeSummary] = useState(false);
   const [balanceLedger, setBalanceLedger] = useState<BalanceLedgerEntry[]>([]);
   const [showBalanceHistory, setShowBalanceHistory] = useState(false);
+  const [liveTradeSessions, setLiveTradeSessions] = useState<Record<string, LiveTradeSession>>({});
+  const [coinChartCache, setCoinChartCache] = useState<Record<string, number[]>>({});
+  const liveTradeSessionsRef = useRef<Record<string, LiveTradeSession>>({});
+  const liveTradeIntervals = useRef<Record<string, number>>({});
+  const liveTradeTimeouts = useRef<Record<string, number>>({});
+  const liveTradeRemovalTimers = useRef<Record<string, number>>({});
+  const liveTradeControllers = useRef<
+    Record<
+      string,
+      {
+        finalize: (options?: { finalPrice?: number; finalPnL?: number; removeAfterMs?: number }) => LiveStreamFinalizeResult | null;
+      }
+    >
+  >({});
+  const coinChartRequests = useRef<Record<string, boolean>>({});
 
   const demoProfitRate = useMemo(() => 0.85 + Math.random() * 0.1, []);
   const demoProfit = Math.round(DEMO_INITIAL_CAPITAL * demoProfitRate * 100) / 100;
@@ -824,6 +897,18 @@ const CryptoInvestmentPlatform = () => {
     return (['bitcoin', 'ethereum', 'solana'] as CryptoTab[]).map((coinId) => createFallbackCoin(coinId, cryptoData[coinId]));
   }, [cryptoData, marketCoins]);
 
+  const activeLiveSessions = useMemo(() => {
+    return Object.values(liveTradeSessions)
+      .slice()
+      .sort((first, second) => new Date(second.startedAt).getTime() - new Date(first.startedAt).getTime());
+  }, [liveTradeSessions]);
+
+  const aggregateLivePnL = useMemo(() => {
+    return Number(
+      activeLiveSessions.reduce((total, session) => total + session.currentPnL, 0).toFixed(2),
+    );
+  }, [activeLiveSessions]);
+
   const generateTradeId = useCallback(
     () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     [],
@@ -851,6 +936,250 @@ const CryptoInvestmentPlatform = () => {
       setBalanceLedger((previous) => [entry, ...previous].slice(0, 100));
     },
     [generateTradeId],
+  );
+
+  const fetchCoinChart = useCallback(async (coinId: string) => {
+    if (!coinId || coinChartRequests.current[coinId]) {
+      return;
+    }
+    coinChartRequests.current[coinId] = true;
+
+    try {
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=7&interval=hourly`,
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch chart data');
+      }
+
+      const payload: { prices?: Array<[number, number]> } = await response.json();
+      const series = Array.isArray(payload?.prices)
+        ? payload.prices
+            .map((point) => {
+              const value = Number(point[1]);
+              if (!Number.isFinite(value)) {
+                return null;
+              }
+              return Number(value.toFixed(2));
+            })
+            .filter((value): value is number => value !== null)
+        : [];
+
+      if (series.length) {
+        setCoinChartCache((previous) => ({
+          ...previous,
+          [coinId]: series,
+        }));
+      }
+    } catch (error) {
+      console.warn(`Unable to load chart data for ${coinId}`, error);
+    } finally {
+      coinChartRequests.current[coinId] = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    liveTradeSessionsRef.current = liveTradeSessions;
+  }, [liveTradeSessions]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(liveTradeIntervals.current).forEach((intervalId) => window.clearInterval(intervalId));
+      Object.values(liveTradeTimeouts.current).forEach((timeoutId) => window.clearTimeout(timeoutId));
+      Object.values(liveTradeRemovalTimers.current).forEach((timerId) => window.clearTimeout(timerId));
+      liveTradeIntervals.current = {};
+      liveTradeTimeouts.current = {};
+      liveTradeRemovalTimers.current = {};
+    };
+  }, []);
+
+  const beginLivePnLStream = useCallback(
+    (config: LiveStreamConfig) => {
+      const {
+        id,
+        referenceId,
+        coin,
+        strategy,
+        action,
+        entryPrice,
+        units,
+        allocated,
+        startedAt,
+        initialBalance,
+        tickMs = 1200,
+        autoCloseInMs,
+        onBalanceUpdate,
+        onComplete,
+      } = config;
+
+      let lastPrice = entryPrice;
+      let lastPnL = 0;
+      let lastBalance = initialBalance;
+      let streamActive = true;
+      let autoCloseTimer: number | undefined;
+
+      setLiveTradeSessions((previous) => ({
+        ...previous,
+        [id]: {
+          id,
+          referenceId,
+          coinId: coin.id,
+          coinName: coin.name,
+          symbol: coin.symbol.toUpperCase(),
+          strategy,
+          action,
+          entryPrice,
+          units,
+          allocated,
+          currentPrice: entryPrice,
+          currentPnL: 0,
+          lastAppliedPnL: 0,
+          currentBalance: initialBalance,
+          status: 'active',
+          startedAt,
+        },
+      }));
+
+      const applyPnLDiff = (targetPnL: number) => {
+        const roundedTarget = Number(targetPnL.toFixed(2));
+        const diff = Number((roundedTarget - lastPnL).toFixed(2));
+        if (diff === 0) {
+          return;
+        }
+        lastPnL = roundedTarget;
+        const updatedBalance = persistBalance((previous) => Number((previous + diff).toFixed(2)));
+        lastBalance = updatedBalance;
+        onBalanceUpdate?.(updatedBalance);
+      };
+
+      const updateSessionState = (payload: Partial<LiveTradeSession>) => {
+        setLiveTradeSessions((previous) => {
+          const next = { ...previous };
+          const current = next[id];
+          if (!current) {
+            return previous;
+          }
+          next[id] = { ...current, ...payload };
+          return next;
+        });
+      };
+
+      const intervalId = window.setInterval(() => {
+        if (!streamActive) {
+          window.clearInterval(intervalId);
+          return;
+        }
+
+        const baseVolatility = strategy === 'auto' ? 0.0022 : 0.0016;
+        const volatility = (Math.random() - 0.5) * baseVolatility;
+        const directionalBias = strategy === 'auto' ? 0.0008 : 0.0004;
+        const price = Number(Math.max(0.01, lastPrice * (1 + volatility + directionalBias)).toFixed(2));
+        lastPrice = price;
+
+        const computedPnL = Number(((price - entryPrice) * units).toFixed(2));
+        applyPnLDiff(computedPnL);
+
+        updateSessionState({
+          currentPrice: price,
+          currentPnL: lastPnL,
+          lastAppliedPnL: lastPnL,
+          currentBalance: lastBalance,
+        });
+      }, tickMs);
+
+      liveTradeIntervals.current[id] = intervalId;
+
+      const finalize = (options?: { finalPrice?: number; finalPnL?: number; removeAfterMs?: number }) => {
+        if (!streamActive) {
+          return null;
+        }
+        streamActive = false;
+
+        window.clearInterval(intervalId);
+        delete liveTradeIntervals.current[id];
+
+        if (autoCloseTimer) {
+          window.clearTimeout(autoCloseTimer);
+          delete liveTradeTimeouts.current[id];
+        }
+
+        const resolvedPrice = Number((options?.finalPrice ?? Math.max(0.01, lastPrice * (1 + (Math.random() - 0.5) * 0.0035))).toFixed(2));
+        lastPrice = resolvedPrice;
+
+        const resolvedPnL =
+          options?.finalPnL !== undefined
+            ? Number(options.finalPnL.toFixed(2))
+            : Number(((resolvedPrice - entryPrice) * units).toFixed(2));
+
+        applyPnLDiff(resolvedPnL);
+
+        updateSessionState({
+          currentPrice: resolvedPrice,
+          currentPnL: lastPnL,
+          lastAppliedPnL: lastPnL,
+          currentBalance: lastBalance,
+          status: 'closing',
+        });
+
+        const removalDelay = options?.removeAfterMs ?? 2400;
+        const removalId = window.setTimeout(() => {
+          setLiveTradeSessions((previous) => {
+            const next = { ...previous };
+            delete next[id];
+            return next;
+          });
+          delete liveTradeRemovalTimers.current[id];
+        }, removalDelay);
+        liveTradeRemovalTimers.current[id] = removalId;
+
+        delete liveTradeControllers.current[id];
+
+        onComplete?.({
+          sessionId: id,
+          finalPrice: resolvedPrice,
+          finalPnL: lastPnL,
+          balanceAfterPnL: lastBalance,
+        });
+
+        return {
+          sessionId: id,
+          finalPrice: resolvedPrice,
+          finalPnL: lastPnL,
+          balanceAfterPnL: lastBalance,
+        };
+      };
+
+      if (autoCloseInMs && autoCloseInMs > 0) {
+        autoCloseTimer = window.setTimeout(() => {
+          finalize();
+        }, autoCloseInMs);
+        liveTradeTimeouts.current[id] = autoCloseTimer;
+      }
+
+      liveTradeControllers.current[id] = { finalize };
+
+      return { finalize };
+    },
+    [persistBalance],
+  );
+
+  const handleForceCloseSession = useCallback(
+    (sessionId: string) => {
+      const controller = liveTradeControllers.current[sessionId];
+      const session = liveTradeSessionsRef.current[sessionId];
+      if (!controller) {
+        return;
+      }
+      const result = controller.finalize({ removeAfterMs: 1200 });
+      if (result) {
+        const symbol = session?.symbol ?? sessionId.toUpperCase();
+        setTradeFeedback(
+          `Locking ${symbol} • Captured ${formatCurrency(result.finalPnL)}. Updated balance ${formatCurrency(result.balanceAfterPnL)}.`,
+        );
+      }
+    },
+    [setTradeFeedback],
   );
 
   const openTradeSummary = useCallback((summary: TradeSummary) => {
@@ -897,7 +1226,7 @@ const CryptoInvestmentPlatform = () => {
   const startAutoPilotCycle = useCallback(
     (coin: MarketCoin) => {
       let workingBalance = Number(userBalance.toFixed(2));
-      if (workingBalance <= MIN_TRADE_BALANCE) {
+      if (workingBalance < MIN_TRADE_BALANCE) {
         setTradeFeedback(`Auto trading requires a balance above ${formatCurrency(MIN_TRADE_BALANCE)}. Deposit funds to deploy the robot.`);
         return;
       }
@@ -926,7 +1255,7 @@ const CryptoInvestmentPlatform = () => {
           return;
         }
 
-        if (workingBalance <= MIN_TRADE_BALANCE || workingBalance <= allocation) {
+        if (workingBalance < MIN_TRADE_BALANCE || workingBalance <= allocation) {
           halted = true;
           setTradeFeedback('Vault balance below the auto-trading threshold. Automation halted.');
           return;
@@ -985,6 +1314,20 @@ const CryptoInvestmentPlatform = () => {
           notes: entryNotes,
         });
 
+        beginLivePnLStream({
+          id: tradeId,
+          referenceId: tradeId,
+          coin,
+          strategy: 'auto',
+          action: 'buy',
+          entryPrice,
+          units: size,
+          allocated: allocation,
+          startedAt: entryTimestamp,
+          initialBalance: workingBalance,
+          tickMs: 900,
+        });
+
         const progressPercent = Math.min(100, Math.max(0, (Math.max(accumulatedProfit, 0) / Math.max(targetProfit, 1)) * 100));
         setTradeFeedback(
           `Auto cycle ${cycleIndex} opened on ${coin.symbol.toUpperCase()} • Target ${formatCurrency(targetProfit)} • Progress ${progressPercent.toFixed(0)}%.`,
@@ -1003,15 +1346,31 @@ const CryptoInvestmentPlatform = () => {
           const resultValue = Number((exitValue - allocation).toFixed(2));
           const exitTimestamp = new Date().toISOString();
 
-          workingBalance = persistBalance((previous) => previous + exitValue);
+          const controller = liveTradeControllers.current[tradeId];
+          const finalizeResult = controller?.finalize({ finalPrice: exitPrice, finalPnL: resultValue });
+          const balanceAfterPnL = finalizeResult?.balanceAfterPnL ?? workingBalance;
+          workingBalance = balanceAfterPnL;
+
+          if (resultValue !== 0) {
+            recordBalanceEntry({
+              referenceId: `${tradeId}-close-pnl`,
+              description: `Auto cycle P/L ${resultValue >= 0 ? 'credited' : 'debited'}`,
+              amountChange: resultValue,
+              balanceAfter: workingBalance,
+              strategy: 'auto',
+              category: resultValue >= 0 ? 'profit' : 'trade-debit',
+            });
+          }
+
+          workingBalance = persistBalance((previous) => Number((previous + allocation).toFixed(2)));
 
           recordBalanceEntry({
-            referenceId: `${tradeId}-close`,
-            description: `Auto SELL ${coin.symbol.toUpperCase()} proceeds`,
-            amountChange: exitValue,
+            referenceId: `${tradeId}-close-principal`,
+            description: `Auto SELL ${coin.symbol.toUpperCase()} principal released`,
+            amountChange: allocation,
             balanceAfter: workingBalance,
             strategy: 'auto',
-            category: 'profit',
+            category: 'system',
           });
 
           pushTradeToJournal({
@@ -1065,7 +1424,7 @@ const CryptoInvestmentPlatform = () => {
             return;
           }
 
-          if (workingBalance <= MIN_TRADE_BALANCE || workingBalance <= allocation) {
+          if (workingBalance < MIN_TRADE_BALANCE || workingBalance <= allocation) {
             halted = true;
             setTradeFeedback('Vault balance now below auto-trading threshold. Automation halted.');
             return;
@@ -1083,7 +1442,7 @@ const CryptoInvestmentPlatform = () => {
 
       executeCycle();
     },
-    [generateTradeId, openTradeSummary, persistBalance, pushTradeToJournal, recordBalanceEntry, userBalance],
+    [beginLivePnLStream, generateTradeId, openTradeSummary, persistBalance, pushTradeToJournal, recordBalanceEntry, userBalance],
   );
 
   const handleWithdrawalSubmit = useCallback(
@@ -1147,7 +1506,7 @@ const CryptoInvestmentPlatform = () => {
         return;
       }
 
-      if (userBalance <= MIN_TRADE_BALANCE) {
+      if (userBalance < MIN_TRADE_BALANCE) {
         setTradeFeedback(`Balance below the ${formatCurrency(MIN_TRADE_BALANCE)} trading threshold. Deposit more funds to execute trades.`);
         return;
       }
@@ -1195,6 +1554,12 @@ const CryptoInvestmentPlatform = () => {
       return;
     }
 
+    if (userBalance < MIN_TRADE_BALANCE) {
+      setTradeIntentError(`A minimum balance of ${formatCurrency(MIN_TRADE_BALANCE)} is required to open new positions.`);
+      setTradeFeedback('Balance below trading minimum. Deposit additional funds to execute buy orders.');
+      return;
+    }
+
     const sanitizedInput = tradeLotSize.replace(/[^0-9.]/g, '');
     const parsedLot = Number.parseFloat(sanitizedInput);
 
@@ -1216,11 +1581,6 @@ const CryptoInvestmentPlatform = () => {
         : 'Proceeds returned to vault balance after execution.';
 
     if (action === 'buy') {
-      if (userBalance <= MIN_TRADE_BALANCE) {
-        setTradeIntentError(`A minimum balance of ${formatCurrency(MIN_TRADE_BALANCE)} is required to open new positions.`);
-        setTradeFeedback('Balance below trading minimum. Deposit additional funds to execute buy orders.');
-        return;
-      }
       if (lotValue > userBalance) {
         setTradeIntentError('Insufficient funds. Please deposit additional capital before trading.');
         setTradeFeedback('Insufficient funds detected. Deposit more capital to execute your next trade.');
@@ -1263,13 +1623,11 @@ const CryptoInvestmentPlatform = () => {
       action === 'buy'
         ? `Buy order filled for ${coin.symbol.toUpperCase()} • ${executedUnits.toFixed(4)} units at ${formatCurrency(filledPrice)}. ${formatCurrency(
             lotValue,
-          )} debited. New balance ${formatCurrency(updatedBalance)}.`
+          )} debited. Live P/L now streaming in the monitor. Current balance ${formatCurrency(updatedBalance)}.`
         : `Sell order executed for ${coin.symbol.toUpperCase()} • ${formatCurrency(lotValue)} credited. New balance ${formatCurrency(
             updatedBalance,
           )}.`,
     );
-
-    handleCancelManualTrade();
 
     openTradeSummary({
       id: tradeId,
@@ -1288,7 +1646,91 @@ const CryptoInvestmentPlatform = () => {
       result: action === 'sell' ? lotValue : undefined,
       notes,
     });
+
+    if (action === 'buy') {
+      beginLivePnLStream({
+        id: tradeId,
+        referenceId: tradeId,
+        coin,
+        strategy: 'manual',
+        action,
+        entryPrice: filledPrice,
+        units: executedUnits,
+        allocated: lotValue,
+        startedAt: timestamp,
+        initialBalance: updatedBalance,
+        tickMs: 1200,
+        autoCloseInMs: 18000,
+        onComplete: ({ finalPrice, finalPnL, balanceAfterPnL }) => {
+          const exitTimestamp = new Date().toISOString();
+          const exitNotional = Number((executedUnits * finalPrice).toFixed(2));
+          const pnlEntryDescription = `Manual trade P/L ${finalPnL >= 0 ? 'credited' : 'debited'}`;
+
+          if (finalPnL !== 0) {
+            recordBalanceEntry({
+              referenceId: `${tradeId}-close-pnl`,
+              description: pnlEntryDescription,
+              amountChange: finalPnL,
+              balanceAfter: balanceAfterPnL,
+              strategy: 'manual',
+              category: finalPnL >= 0 ? 'profit' : 'trade-debit',
+            });
+          }
+
+          const balanceAfterPrincipal = persistBalance((previous) => Number((previous + lotValue).toFixed(2)));
+
+          recordBalanceEntry({
+            referenceId: `${tradeId}-close-principal`,
+            description: `Manual SELL ${coin.symbol.toUpperCase()} principal released`,
+            amountChange: lotValue,
+            balanceAfter: balanceAfterPrincipal,
+            strategy: 'manual',
+            category: 'system',
+          });
+
+          const closureNotes = 'Position closed automatically—vault risk controller secured P/L.';
+          pushTradeToJournal({
+            id: `${tradeId}-close`,
+            coinId: coin.id,
+            symbol: coin.symbol.toUpperCase(),
+            action: 'sell',
+            price: finalPrice,
+            size: executedUnits,
+            status: 'closed',
+            timestamp: exitTimestamp,
+            strategy: 'manual',
+            notes: closureNotes,
+            result: finalPnL,
+          });
+
+          openTradeSummary({
+            id: `${tradeId}-close`,
+            coinId: coin.id,
+            coinName: coin.name,
+            symbol: coin.symbol.toUpperCase(),
+            action: 'sell',
+            strategy: 'manual',
+            price: finalPrice,
+            units: executedUnits,
+            notional: exitNotional,
+            balanceAfter: balanceAfterPrincipal,
+            status: 'closed',
+            entryTimestamp: timestamp,
+            exitTimestamp,
+            result: finalPnL,
+            notes: closureNotes,
+          });
+
+          setTradeFeedback(
+            `Manual trade on ${coin.symbol.toUpperCase()} closed • P/L ${formatCurrency(finalPnL)}. Principal returned. Balance ${formatCurrency(balanceAfterPrincipal)}.`,
+          );
+        },
+      });
+    }
+
+    handleCancelManualTrade();
   }, [
+    beginLivePnLStream,
     generateTradeId,
     handleCancelManualTrade,
     openTradeSummary,
@@ -1567,7 +2009,7 @@ const CryptoInvestmentPlatform = () => {
   return marketCoins.map((coin) => {
       const change = coin.price_change_percentage_24h ?? 0;
       const isPositive = change >= 0;
-      const sparkline = coin.sparkline_in_7d?.price ?? [];
+      const sparkline = coinChartCache[coin.id]?.slice(-48) ?? coin.sparkline_in_7d?.price ?? [];
       const sparklinePath = generateSparklinePath(sparkline);
       const gradientId = `sparkline-gradient-${coin.id}`;
       return (
@@ -1671,13 +2113,18 @@ const CryptoInvestmentPlatform = () => {
         </tr>
       );
     });
-  }, [handleCoinQuickView, loadingMarkets, marketCoins, marketError]);
+  }, [coinChartCache, handleCoinQuickView, loadingMarkets, marketCoins, marketError]);
 
   const topMarketCoins = useMemo(() => marketCoins.slice(0, 12), [marketCoins]);
 
   const selectedCoinSeries = useMemo(() => {
     if (!selectedCoin) {
       return [] as number[];
+    }
+
+    const cached = coinChartCache[selectedCoin.id];
+    if (cached?.length) {
+      return cached.slice(-168);
     }
 
     const baseSeries = selectedCoin.sparkline_in_7d?.price ?? [];
@@ -1692,7 +2139,7 @@ const CryptoInvestmentPlatform = () => {
       const noise = Math.cos(index / 2.5) * referencePrice * 0.006;
       return referencePrice + wave + drift + noise;
     });
-  }, [selectedCoin]);
+  }, [coinChartCache, selectedCoin]);
 
   const selectedCoinPaths = useMemo(() => generateLinePath(selectedCoinSeries, 560, 220), [selectedCoinSeries]);
 
@@ -1714,10 +2161,39 @@ const CryptoInvestmentPlatform = () => {
     return null;
   }, [activeTab, cryptoData, marketCoins]);
 
+  const heroCoinId = heroCoin?.id ?? null;
+  const selectedCoinId = selectedCoin?.id ?? null;
+
+  useEffect(() => {
+    if (!heroCoinId) {
+      return;
+    }
+    if (coinChartCache[heroCoinId]?.length) {
+      return;
+    }
+    fetchCoinChart(heroCoinId);
+  }, [coinChartCache, fetchCoinChart, heroCoinId]);
+
+  useEffect(() => {
+    if (!selectedCoinId) {
+      return;
+    }
+    if (coinChartCache[selectedCoinId]?.length) {
+      return;
+    }
+    fetchCoinChart(selectedCoinId);
+  }, [coinChartCache, fetchCoinChart, selectedCoinId]);
+
   const heroSeries = useMemo(() => {
     if (!heroCoin) {
       return [] as number[];
     }
+
+    const cached = coinChartCache[heroCoin.id];
+    if (cached?.length) {
+      return cached.slice(-120);
+    }
+
     const baseSeries = heroCoin.sparkline_in_7d?.price ?? [];
     if (baseSeries.length) {
       return baseSeries.slice(-60);
@@ -1729,7 +2205,7 @@ const CryptoInvestmentPlatform = () => {
       const drift = referencePrice * (1 + slope * (index / 60));
       return drift + wave;
     });
-  }, [heroCoin]);
+  }, [coinChartCache, heroCoin]);
 
   const heroLinePaths = useMemo(() => generateLinePath(heroSeries, 320, 120), [heroSeries]);
 
@@ -2182,6 +2658,108 @@ const CryptoInvestmentPlatform = () => {
                     <Headphones className="w-4 h-4 text-blue-300" />
                     <span>24/7 desk support</span>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {isAuthenticated && activeLiveSessions.length > 0 && (
+              <div className="mt-12 rounded-3xl border border-emerald-400/30 bg-slate-950/70 p-6 shadow-lg shadow-emerald-500/10">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-emerald-200">
+                      <TrendingUp className="h-4 w-4" />
+                      Live P/L Monitor
+                    </div>
+                    <h3 className="mt-3 text-2xl font-bold text-white">Active trade sessions streaming in real time</h3>
+                    <p className="text-sm text-slate-300">Balances refresh on every tick. Close a leg early to lock in the displayed profit.</p>
+                  </div>
+                  <div
+                    className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                      aggregateLivePnL >= 0
+                        ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                        : 'border-red-400/40 bg-red-500/10 text-red-200'
+                    }`}
+                  >
+                    Aggregate P/L {formatCurrency(aggregateLivePnL)}
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {activeLiveSessions.map((session) => {
+                    const pnlPositive = session.currentPnL >= 0;
+                    const sessionClosing = session.status !== 'active';
+                    return (
+                      <div
+                        key={`live-session-${session.id}`}
+                        className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 backdrop-blur-sm"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">
+                              {session.strategy === 'auto' ? 'Auto Strategy' : 'Manual Trade'}
+                            </p>
+                            <p className="text-lg font-semibold text-white">{session.symbol}</p>
+                          </div>
+                          <span
+                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
+                              sessionClosing
+                                ? 'border-amber-400/40 bg-amber-500/10 text-amber-200'
+                                : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                            }`}
+                          >
+                            {sessionClosing ? 'Closing' : 'Streaming'}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-300">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Entry</p>
+                            <p className="font-semibold text-white">{formatCurrency(session.entryPrice)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Live Price</p>
+                            <p className="font-semibold text-white">{formatCurrency(session.currentPrice)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Units</p>
+                            <p className="font-semibold text-white">{session.units.toFixed(4)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Allocated</p>
+                            <p className="font-semibold text-white">{formatCurrency(session.allocated)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Live P/L</p>
+                            <p className={`text-lg font-semibold ${pnlPositive ? 'text-emerald-300' : 'text-red-300'}`}>
+                              {formatCurrency(session.currentPnL)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Vault Balance</p>
+                            <p className="text-sm font-semibold text-slate-200">{formatCurrency(session.currentBalance)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
+                          <span>Started {new Date(session.startedAt).toLocaleTimeString()}</span>
+                          <span>{session.action.toUpperCase()} • {session.coinName}</span>
+                        </div>
+
+                        {!sessionClosing && (
+                          <button
+                            type="button"
+                            className="mt-4 w-full rounded-xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/60 hover:text-emerald-100"
+                            onClick={() => handleForceCloseSession(session.id)}
+                          >
+                            Lock P/L Now
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2711,8 +3289,8 @@ const CryptoInvestmentPlatform = () => {
                     {topMarketCoins.map((coin) => {
                       const change = coin.price_change_percentage_24h ?? 0;
                       const positive = change >= 0;
-                      const series = coin.sparkline_in_7d?.price ?? [];
-                      const { path, area } = generateLinePath(series.length ? series.slice(-48) : [coin.current_price], 220, 80);
+                      const series = coinChartCache[coin.id]?.slice(-96) ?? coin.sparkline_in_7d?.price ?? [];
+                      const { path, area } = generateLinePath(series.length ? series : [coin.current_price], 220, 80);
                       const gradientId = `modal-line-${coin.id}`;
                       return (
                         <div key={coin.id} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-inner shadow-slate-950/40">
