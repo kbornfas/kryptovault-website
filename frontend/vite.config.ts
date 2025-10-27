@@ -3,11 +3,12 @@ import path from "path";
 import { defineConfig, type PluginOption } from "vite";
 
 const plugins: PluginOption[] = [react()];
+const base = process.env.VERCEL ? '/' : '/kryptovault-website/';
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins,
-  base: '/kryptovault-website/', // GitHub Pages base path
+  base,
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

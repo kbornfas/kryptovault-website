@@ -41,6 +41,14 @@ See our comprehensive [Deployment Guide](DEPLOYMENT.md) for:
 - DigitalOcean
 - And more!
 
+### Option 3: Vercel (Frontend)
+
+1. Sign up at [Vercel](https://vercel.com) and create a new project from this repository.
+2. When prompted, set the project root directory to `frontend/`.
+3. Define the build command as `pnpm --filter frontend build` and the output directory as `frontend/dist` (auto-detected via `vercel.json`).
+4. Add the environment variable `VITE_API_URL` pointing to your backend (e.g. Railway deployment).
+5. Deploy — Vercel will run the configured build and serve the static output with SPA routing.
+
 ## Project Structure
 
 ```
@@ -124,7 +132,7 @@ npm run dev:frontend
 ### Workspace Level
 - `npm run dev` - Run both backend and frontend in development mode
 - `npm run build` - Build both backend and frontend for production
-- `npm run lint` - Lint both backend and frontend
+- `npm run lint` - Lint the backend service (frontend linting removed)
 - `npm run install:all` - Install all dependencies
 
 ### Backend (NestJS)
@@ -138,7 +146,6 @@ npm run dev:frontend
 - `npm run dev` - Development server
 - `npm run build` - Build for production
 - `npm run preview` - Preview production build
-- `npm run lint` - ESLint check
 
 ## API Documentation
 
