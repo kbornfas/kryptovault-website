@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "installCommand": "pnpm install --frozen-lockfile",
+  "installCommand": "corepack enable pnpm && pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter frontend build",
   "builds": [
     {
