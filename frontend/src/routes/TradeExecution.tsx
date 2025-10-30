@@ -1,5 +1,10 @@
+import { API_ENDPOINTS } from '@/config/api';
+import apiClient from '@/lib/apiClient';
+import { useToast } from '@chakra-ui/react';
+import { isAxiosError } from 'axios';
 import { ArrowRight, CheckCircle2, Clock, Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation } from 'react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const formatCurrency = (value: number) =>
@@ -40,6 +45,18 @@ type TradeStep = {
   description: string;
 };
 
+type ExecuteTradeResponse = {
+  id: string;
+  status: string;
+  action: string;
+  strategy: string;
+  price: string;
+  size: string;
+  result: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
 const actionLabels: Record<TradeExecutionState['action'], string> = {
   buy: 'Manual Buy Order',
   sell: 'Manual Sell Order',
@@ -50,12 +67,98 @@ const TradeExecution = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as TradeExecutionState | undefined;
+  const toast = useToast();
+  const executionTriggeredRef = useRef(false);
+
+  const {
+    mutate: triggerExecution,
+    data: executionData,
+    isLoading: isExecutionLoading,
+    isError: isExecutionError,
+    error: executionError,
+  } = useMutation<ExecuteTradeResponse, unknown, TradeExecutionState>(
+    async (tradeState) => {
+      const price = Math.max(tradeState.coin.current_price, 0.01);
+      const balance = tradeState.availableBalance ?? 0;
+      const fallbackNotional = 250;
+      const normalizedNotional =
+        balance > 0 ? Math.max(25, Math.min(balance * 0.2, 2_500)) : fallbackNotional;
+      const size = Number((normalizedNotional / price).toFixed(4));
+
+      if (!Number.isFinite(size) || size <= 0) {
+        throw new Error('Unable to determine a valid trade size for execution.');
+      }
+
+      const action = tradeState.action === 'sell' ? 'SELL' : 'BUY';
+      const strategy = tradeState.action === 'auto' ? 'AUTO' : 'MANUAL';
+      const notes =
+        tradeState.action === 'auto'
+          ? 'Automated vault strategy triggered from execution console.'
+          : `Manual ${action.toLowerCase()} order routed from execution console.`;
+
+      const response = await apiClient.post<ExecuteTradeResponse>(
+        `${API_ENDPOINTS.TRADES}/execute`,
+        {
+          coinId: tradeState.coin.id,
+          symbol: tradeState.coin.symbol.toUpperCase(),
+          action,
+          strategy,
+          price,
+          size,
+          notes,
+          metadata: {
+            source: 'trade-execution-route',
+            initiatedAt: tradeState.initiatedAt,
+            availableBalance: tradeState.availableBalance,
+            notional: normalizedNotional,
+          },
+        },
+      );
+
+      return response.data;
+    },
+    {
+      onSuccess: (payload) => {
+        toast({
+          title: 'Trade dispatched',
+          description: `Reference ${payload.id} recorded. Track settlement from trade history.`,
+          status: 'success',
+          duration: 5000,
+          isClosable: true,
+        });
+      },
+      onError: (error) => {
+        const description = isAxiosError(error)
+          ? error.response?.data?.message ?? error.message
+          : error instanceof Error
+            ? error.message
+            : 'We were unable to execute the trade. Please try again.';
+
+        toast({
+          title: 'Execution failed',
+          description,
+          status: 'error',
+          duration: 6000,
+          isClosable: true,
+        });
+      },
+    },
+  );
 
   useEffect(() => {
     if (!state) {
       navigate('/', { replace: true });
     }
   }, [navigate, state]);
+
+  useEffect(() => {
+    if (!state || executionTriggeredRef.current) {
+      return;
+    }
+
+    executionTriggeredRef.current = true;
+    triggerExecution(state);
+  }, [state, triggerExecution]);
 
   const [activeStep, setActiveStep] = useState(0);
 
@@ -125,6 +228,24 @@ const TradeExecution = () => {
     };
   }, [steps]);
 
+  const executionReference = executionData?.id ?? null;
+
+  const executionErrorMessage = useMemo(() => {
+    if (!isExecutionError) {
+      return null;
+    }
+
+    if (isAxiosError(executionError)) {
+      return executionError.response?.data?.message ?? executionError.message;
+    }
+
+    if (executionError instanceof Error) {
+      return executionError.message;
+    }
+
+    return 'We were unable to submit the trade to the execution desk.';
+  }, [executionError, isExecutionError]);
+
   if (!state) {
     return null;
   }
@@ -145,6 +266,23 @@ const TradeExecution = () => {
             Back
           </button>
           <div className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-white/5 p-8 shadow-xl shadow-indigo-500/10 backdrop-blur">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-indigo-200/70">
+              {isExecutionLoading ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Dispatching order to execution desk…
+                </span>
+              ) : executionReference ? (
+                <span className="inline-flex items-center gap-2 text-emerald-300">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Reference {executionReference}
+                </span>
+              ) : null}
+
+              {executionErrorMessage ? (
+                <span className="text-red-300">{executionErrorMessage}</span>
+              ) : null}
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-6">
               <div className="flex items-center gap-4">
                 {coin.image ? (

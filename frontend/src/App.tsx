@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, BrowserRouter as Router, Routes } from 'react-
 import Footer from "./components/Footer";
 import Navbar from "./components/Navbar";
 import { AuthProvider } from "./context/AuthContext";
+import { NotificationProvider } from "./context/NotificationContext";
 
 const HomeRoute = lazy(() => import('./routes/Home'));
 const AboutRoute = lazy(() => import('./routes/About'));
@@ -14,7 +15,9 @@ const AdminRoute = lazy(() => import('./components/admin/AdminRoute'));
 const TradeHistoryRoute = lazy(() => import('./routes/TradeHistory'));
 const AutoTradingRoute = lazy(() => import('./routes/AutoTrading'));
 const ResetPasswordRoute = lazy(() => import('./routes/ResetPassword'));
+const ResetPasswordConfirmRoute = lazy(() => import('./routes/ResetPasswordConfirm'));
 const TradeExecutionRoute = lazy(() => import('./routes/TradeExecution'));
+const VerifyEmailRoute = lazy(() => import('./routes/VerifyEmail'));
 
 const DefaultLayout: React.FC = () => (
   <div className="bg-gradient-to-b from-indigo-900 via-purple-800 to-black text-white min-h-screen flex flex-col">
@@ -38,10 +41,14 @@ const App: React.FC = () => {
   const basename = import.meta.env.BASE_URL || "/";
 
   return (
-    <Router basename={basename}>
+    <Router
+      basename={basename}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <AuthProvider>
-        <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-black text-white">Loading...</div>}>
-          <Routes>
+        <NotificationProvider>
+          <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-black text-white">Loading...</div>}>
+            <Routes>
             <Route path="/" element={<HomeRoute />} />
             <Route element={<MinimalLayout />}>
               <Route path="/about" element={<AboutRoute />} />
@@ -52,6 +59,8 @@ const App: React.FC = () => {
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/signup" element={<SignUpRoute />} />
               <Route path="/reset-password" element={<ResetPasswordRoute />} />
+                <Route path="/reset-password/confirm" element={<ResetPasswordConfirmRoute />} />
+                <Route path="/verify-email" element={<VerifyEmailRoute />} />
               <Route path="/trade-history" element={<TradeHistoryRoute />} />
               <Route path="/trade-execution" element={<TradeExecutionRoute />} />
               <Route element={<AdminRoute />}>
@@ -59,8 +68,9 @@ const App: React.FC = () => {
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
+            </Routes>
+          </Suspense>
+        </NotificationProvider>
       </AuthProvider>
     </Router>
   );

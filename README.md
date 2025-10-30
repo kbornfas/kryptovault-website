@@ -2,7 +2,7 @@
 
 A full-stack cryptocurrency investment platform built with NestJS (Backend) and React + Vite (Frontend).
 
-[![Deploy](https://img.shields.io/badge/Deploy-Ready-brightgreen)](DEPLOYMENT.md)
+[![Deployment Guide](https://img.shields.io/badge/Backend%20Deploy-Guide-brightgreen)](Backend/DEPLOYMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## ✨ Features
@@ -19,34 +19,29 @@ A full-stack cryptocurrency investment platform built with NestJS (Backend) and 
 
 ## 🚀 Quick Deploy
 
-### Option 1: Docker (Recommended)
+### Option 1: Docker Compose (Recommended for Local Evaluation)
 
-**Windows:**
-```powershell
-.\deploy.ps1
-```
+1. Copy the backend environment template and adjust values (see [Backend/.env.example](Backend/.env.example)).
+2. From the repository root run:
 
-**Linux/Mac:**
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
+	```powershell
+	docker compose up --build
+	```
 
-### Option 2: Cloud Platforms
+	The backend will listen on `http://localhost:3000` and the frontend will be available at `http://localhost`.
 
-See our comprehensive [Deployment Guide](DEPLOYMENT.md) for:
-- Railway
-- Vercel + Railway
-- AWS EC2
-- DigitalOcean
-- And more!
+3. Stop the stack with `Ctrl+C`, then clean up containers and volumes if needed via `docker compose down -v`.
 
-### Option 3: Vercel (Frontend)
+### Option 2: Review the Deployment Guide for Production
+
+Follow the detailed rollout plan in [`Backend/DEPLOYMENT.md`](Backend/DEPLOYMENT.md) to push the API, background workers, and supporting services to managed infrastructure (Render / Fly.io / Cloud Run, etc.).
+
+### Option 3: Vercel (Frontend Only)
 
 1. Sign up at [Vercel](https://vercel.com) and create a new project from this repository.
 2. When prompted, set the project root directory to `frontend/`.
 3. Define the build command as `pnpm --filter frontend build` and the output directory as `frontend/dist` (auto-detected via `vercel.json`).
-4. Add the environment variable `VITE_API_URL` pointing to your backend (e.g. Railway deployment).
+4. Add the environment variable `VITE_API_URL` pointing to your backend (e.g. `https://api.yourdomain.com`).
 5. Deploy — Vercel will run the configured build and serve the static output with SPA routing.
 
 ## Project Structure
@@ -101,6 +96,30 @@ NODE_ENV="development"
 CORS_ORIGIN="http://localhost:5173"
 ```
 
+#### Mailer Configuration
+Populate the following variables in each environment to enable password reset emails:
+
+```env
+MAIL_HOST="smtp.yourprovider.com"
+MAIL_PORT=587
+MAIL_USER="smtp-user"
+MAIL_PASSWORD="smtp-password"
+MAIL_FROM="KryptoVault <no-reply@kryptovault.com>"
+SUPPORT_EMAIL="support@kryptovault.com"
+PASSWORD_RESET_URL_BASE="https://app.yourdomain.com"
+```
+
+To confirm connectivity, optionally set `MAIL_TEST_RECIPIENT` (and override `MAIL_TEST_SUBJECT`/`MAIL_TEST_BODY` if desired) then run:
+
+```bash
+pnpm --filter kryptovault-backend test:smtp
+```
+
+- The script verifies the SMTP credentials and, when `MAIL_TEST_RECIPIENT` is present, sends a one-off test message.
+- Repeat this verification in staging/production to ensure each environment can dispatch email.
+
+Once deployed with live credentials, monitor application logs for the warning string `Password reset email could not be delivered` immediately after password-reset tests. This warning indicates the transporter rejected the message and the reset token was cleared. If you see it, re-check the SMTP host/credentials or spam policies before retrying.
+
 ### 4. Database Setup
 ```bash
 cd Backend
@@ -126,6 +145,14 @@ npm run dev:backend
 ```bash
 npm run dev:frontend
 ```
+
+## 🧪 Testing & CI
+
+Automated test coverage is not yet in place. To prevent regressions in core flows (authentication, payments, automation), prioritize the following:
+
+- Backend (NestJS): enable Jest by adding targeted unit and integration specs for `modules/auth` and `modules/payments`, wiring Prisma test utilities for database interactions.
+- Frontend (React): configure Vitest with React Testing Library to exercise protected routes, plan selection, and transaction views.
+- CI: extend the existing GitHub Actions workflow to run backend Jest suites and frontend Vitest suites alongside linting before deploying.
 
 ## Available Scripts
 

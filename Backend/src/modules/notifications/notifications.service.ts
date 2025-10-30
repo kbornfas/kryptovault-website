@@ -1,14 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
-import { IsNotEmpty, IsString, MaxLength, MinLength, validateOrReject } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import { validateOrReject } from 'class-validator';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
-
-export  interface CreateNotificationDto {
-  userId: string;
-  title: string;
-  message: string;
-}
+import { CreateNotificationDto } from './dto/create-notification.dto';
 
 @Injectable()
 @WebSocketGateway({
@@ -56,29 +52,30 @@ export class NotificationsService implements OnGatewayConnection, OnGatewayDisco
 
   async sendNotification(dto: CreateNotificationDto) {
     try {
-      // Validate notification data
-      await validateOrReject(dto);
+      const payload = plainToInstance(CreateNotificationDto, dto);
+
+      await validateOrReject(payload);
 
       // Store notification in database
       const notification = await this.prisma.notification.create({
         data: {
-          userId: dto.userId,
-          title: dto.title,
-          message: dto.message,
+          userId: payload.userId,
+          title: payload.title,
+          message: payload.message,
           read: false,
         },
       });
 
       // Send real-time notification via WebSocket
-      if (this.connectedClients.has(dto.userId)) {
-        this.server.to(dto.userId).emit('notification', notification);
+      if (this.connectedClients.has(payload.userId)) {
+        this.server.to(payload.userId).emit('notification', notification);
       }
 
       return notification;
     } catch (error) {
-      if (error.length > 0 && error[0].constraints) {
-        // Validation errors
-        throw new BadRequestException(Object.values(error[0].constraints)[0]);
+      if (Array.isArray(error) && error.length > 0) {
+        const message = Object.values(error[0].constraints ?? {})[0];
+        throw new BadRequestException(message ?? 'Invalid notification payload');
       }
       throw error;
     }

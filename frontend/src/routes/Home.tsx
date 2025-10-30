@@ -1,3 +1,7 @@
+import { API_ENDPOINTS } from '@/config/api';
+import apiClient from '@/lib/apiClient';
+import { useToast } from '@chakra-ui/react';
+import { isAxiosError } from 'axios';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -22,6 +26,7 @@ import {
   Zap
 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -46,6 +51,56 @@ type MarketCoin = {
   };
 };
 
+type CryptoType = 'BTC' | 'ETH' | 'USDT' | 'SOL' | 'BNB' | 'TRX';
+
+type DepositTicket = {
+  transactionId: string;
+  depositAddress: string;
+  amount: number;
+  cryptoType: CryptoType;
+  minConfirmations: number;
+};
+
+type DepositStatus = 'PENDING' | 'AWAITING_CONFIRMATION' | 'COMPLETED' | 'FAILED' | 'REJECTED';
+
+type DepositAddressResponse = {
+  address: string;
+  cryptoType: CryptoType;
+  minConfirmations: number;
+};
+
+type DepositHistoryEntry = {
+  id: string;
+  amount: string | number;
+  status: DepositStatus;
+  cryptoType: CryptoType | null;
+  txHash: string | null;
+  walletAddress: string | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  confirmations?: number | null;
+  confirmationTarget?: number | null;
+};
+
+type ConfirmDepositResponse = {
+  success: boolean;
+  status: DepositStatus;
+  message: string;
+  confirmations: number;
+  confirmationTarget: number;
+};
+
+const DEPOSIT_STATUS_META: Record<DepositStatus, { label: string; className: string }> = {
+  PENDING: { label: 'Ticket issued', className: 'bg-amber-500/20 text-amber-200' },
+  AWAITING_CONFIRMATION: {
+    label: 'Awaiting confirmations',
+    className: 'bg-sky-500/20 text-sky-200',
+  },
+  COMPLETED: { label: 'Completed', className: 'bg-emerald-500/20 text-emerald-300' },
+  FAILED: { label: 'Failed', className: 'bg-red-500/20 text-red-300' },
+  REJECTED: { label: 'Rejected', className: 'bg-red-500/20 text-red-300' },
+};
 type SignupFormState = {
   fullName: string;
   email: string;
@@ -242,30 +297,34 @@ type DepositAssetKey = keyof typeof DEPOSIT_ADDRESSES;
 
 const DEPOSIT_ORDER: DepositAssetKey[] = ['usdt', 'btc', 'eth', 'sol', 'card'];
 
-const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string; description: string; note: string }> = {
+const DEPOSIT_METADATA: Record<DepositAssetKey, { label: string; network: string; description: string; note: string; cryptoType?: CryptoType }> = {
   usdt: {
     label: 'USDT • Tether (TRC-20)',
     network: 'Tron TRC-20',
     description: 'Stablecoin onboarding for instant credit to your vault. Recommended for funding automated strategies.',
     note: 'Minimum deposit $10. Zero-fee internal crediting within 60 seconds.',
+    cryptoType: 'USDT',
   },
   btc: {
     label: 'BTC • Bitcoin',
     network: 'Bitcoin Mainnet',
     description: 'Perfect for long-term storage with cold vault segregation and instant hedging availability.',
     note: 'Network fees apply. Funds settle after 2 confirmations.',
+    cryptoType: 'BTC',
   },
   eth: {
     label: 'ETH • Ethereum',
     network: 'Ethereum Mainnet',
     description: 'Access DeFi yields, staking, and smart-trade routing with lightning execution through our vault.',
     note: 'Network fees apply. Funds settle after 20 confirmations.',
+    cryptoType: 'ETH',
   },
   sol: {
     label: 'SOL • Solana',
     network: 'Solana Mainnet',
     description: 'Ultra-low latency network for high-frequency strategies and index rebalancing.',
     note: 'Minimum deposit $10. Instant availability once detected on-chain.',
+    cryptoType: 'SOL',
   },
   card: {
     label: 'Card Checkout',
@@ -431,7 +490,9 @@ const generateLinePath = (values: number[], width: number, height: number): { pa
 
 const CryptoInvestmentPlatform = () => {
   const navigate = useNavigate();
-  const { user, logout: authLogout } = useAuth();
+  const { user, login: authLogin, logout: authLogout, refreshUser } = useAuth();
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showDashMenu, setShowDashMenu] = useState(false);
@@ -462,11 +523,16 @@ const CryptoInvestmentPlatform = () => {
   const [registeredProfile, setRegisteredProfile] = useState<RegisteredProfile | null>(null);
   const [signInForm, setSignInForm] = useState({ email: '', password: '' });
   const [signInMessage, setSignInMessage] = useState('');
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   const [selectedDepositAsset, setSelectedDepositAsset] = useState<keyof typeof DEPOSIT_ADDRESSES>('usdt');
   const [selectedCoin, setSelectedCoin] = useState<MarketCoin | null>(null);
   const [pendingAction, setPendingAction] = useState<'buy' | 'sell' | 'auto' | 'view' | null>(null);
   const [copiedAsset, setCopiedAsset] = useState<DepositAssetKey | null>(null);
+  const [depositAmountInput, setDepositAmountInput] = useState('');
+  const [depositTicket, setDepositTicket] = useState<DepositTicket | null>(null);
+  const [confirmTxHash, setConfirmTxHash] = useState('');
+  const [confirmAmountInput, setConfirmAmountInput] = useState('');
   const [tradeJournal, setTradeJournal] = useState<TradeExecution[]>([]);
   const [tradeFeedback, setTradeFeedback] = useState<string | null>(null);
   const [showTradeSelector, setShowTradeSelector] = useState(false);
@@ -541,6 +607,10 @@ const CryptoInvestmentPlatform = () => {
       if (panel === 'deposit') {
         setSelectedDepositAsset('usdt');
         setCopiedAsset(null);
+        setDepositAmountInput('');
+        setDepositTicket(null);
+        setConfirmTxHash('');
+        setConfirmAmountInput('');
       }
       if (panel === 'withdraw') {
         setSelectedWithdrawalMethod(options?.presetWithdrawalMethod ?? 'usdt');
@@ -555,6 +625,13 @@ const CryptoInvestmentPlatform = () => {
     setActivePanel(null);
     setWithdrawFeedback(null);
   }, []);
+
+  useEffect(() => {
+    setDepositTicket(null);
+    setDepositAmountInput('');
+    setConfirmTxHash('');
+    setConfirmAmountInput('');
+  }, [selectedDepositAsset]);
 
   const closeDashMenu = useCallback(() => {
     setShowDashMenu(false);
@@ -583,19 +660,6 @@ const CryptoInvestmentPlatform = () => {
 
   const closeTradeSelector = useCallback(() => {
     setShowTradeSelector(false);
-  }, []);
-
-  const handleCopyAddress = useCallback(async (asset: DepositAssetKey) => {
-    const address = DEPOSIT_ADDRESSES[asset];
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(address);
-        setCopiedAsset(asset);
-        window.setTimeout(() => setCopiedAsset((current) => (current === asset ? null : current)), 2200);
-      }
-    } catch (error) {
-      console.warn('Unable to copy deposit address', error);
-    }
   }, []);
 
   const handleOpenSignupFlow = useCallback(() => {
@@ -676,6 +740,119 @@ const CryptoInvestmentPlatform = () => {
     [],
   );
 
+  useEffect(() => {
+    if (!user?.walletBalance) {
+      return;
+    }
+
+    const numericBalance = Number(user.walletBalance);
+    if (Number.isNaN(numericBalance)) {
+      return;
+    }
+
+    persistBalance(numericBalance);
+  }, [persistBalance, user?.walletBalance]);
+
+  const selectedDepositMeta = useMemo(() => DEPOSIT_METADATA[selectedDepositAsset], [selectedDepositAsset]);
+  const selectedCryptoType = selectedDepositMeta.cryptoType ?? null;
+
+  const {
+    data: depositAddressData,
+    isLoading: isDepositAddressLoading,
+    isError: isDepositAddressError,
+    error: depositAddressError,
+  } = useQuery<DepositAddressResponse>(
+    ['deposit-address', selectedCryptoType],
+    async () => {
+      if (!selectedCryptoType) {
+        throw new Error('Unsupported asset');
+      }
+      const response = await apiClient.get<DepositAddressResponse>(
+        `${API_ENDPOINTS.CRYPTO_PAYMENTS}/deposit-address/${selectedCryptoType}`,
+      );
+      return response.data;
+    },
+    {
+      enabled: Boolean(selectedCryptoType && isAuthenticated),
+      staleTime: 30_000,
+    },
+  );
+
+  const {
+    data: depositHistory = [],
+    isLoading: isDepositHistoryLoading,
+    isError: isDepositHistoryError,
+    error: depositHistoryError,
+    isFetching: isDepositHistoryFetching,
+  } = useQuery<DepositHistoryEntry[]>(
+    ['deposit-history'],
+    async () => {
+      const response = await apiClient.get<DepositHistoryEntry[]>(`${API_ENDPOINTS.CRYPTO_PAYMENTS}/deposits`);
+      return response.data;
+    },
+    {
+      enabled: isAuthenticated,
+      staleTime: 15_000,
+    },
+  );
+
+  const depositAddressErrorMessage = useMemo(() => {
+    if (!isDepositAddressError || !depositAddressError) {
+      return null;
+    }
+    if (isAxiosError(depositAddressError)) {
+      return depositAddressError.response?.data?.message ?? depositAddressError.message;
+    }
+    if (depositAddressError instanceof Error) {
+      return depositAddressError.message;
+    }
+    return 'We could not load the deposit address for this asset.';
+  }, [depositAddressError, isDepositAddressError]);
+
+  const depositHistoryErrorMessage = useMemo(() => {
+    if (!isDepositHistoryError || !depositHistoryError) {
+      return null;
+    }
+    if (isAxiosError(depositHistoryError)) {
+      return depositHistoryError.response?.data?.message ?? depositHistoryError.message;
+    }
+    if (depositHistoryError instanceof Error) {
+      return depositHistoryError.message;
+    }
+    return 'We were unable to load your recent deposits.';
+  }, [depositHistoryError, isDepositHistoryError]);
+
+  const initiateDepositMutation = useMutation<DepositTicket, unknown, { amount: number; cryptoType: CryptoType }>(
+    async ({ amount, cryptoType }) => {
+      const response = await apiClient.post<DepositTicket>(
+        `${API_ENDPOINTS.CRYPTO_PAYMENTS}/deposit/initiate`,
+        {
+          amount,
+          cryptoType,
+        },
+      );
+      return response.data;
+    },
+  );
+
+  const confirmDepositMutation = useMutation<
+    ConfirmDepositResponse,
+    unknown,
+    { transactionId: string; txHash: string; amount?: number }
+  >(
+    async ({ transactionId, txHash, amount }) => {
+      const response = await apiClient.post<ConfirmDepositResponse>(
+        `${API_ENDPOINTS.CRYPTO_PAYMENTS}/deposit/confirm`,
+        {
+          transactionId,
+          txHash,
+          amount,
+        },
+      );
+      return response.data;
+    },
+  );
+
   const handleOpenSignInFlow = useCallback(() => {
     setMobileMenuOpen(false);
     setShowSignInFlow(true);
@@ -685,6 +862,263 @@ const CryptoInvestmentPlatform = () => {
       password: '',
     }));
   }, [registeredProfile]);
+
+  const handleSignInSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      const email = signInForm.email.trim();
+      const password = signInForm.password.trim();
+
+      if (!email || !password) {
+        setSignInMessage('Enter your email and password to continue.');
+        return;
+      }
+
+      setIsSigningIn(true);
+      setSignInMessage('');
+
+      try {
+        const authUser = await authLogin(email, password);
+        setSignInMessage(`Welcome back, ${authUser.name ?? authUser.email}!`);
+        setSignInForm({ email: authUser.email, password: '' });
+        setIsAuthenticated(true);
+        setMobileMenuOpen(false);
+        await refreshUser();
+        toast({
+          title: 'Login successful',
+          description: 'Your vault dashboard is now unlocked.',
+          status: 'success',
+          duration: 4000,
+          isClosable: true,
+        });
+        window.setTimeout(() => {
+          setShowSignInFlow(false);
+          setSignInMessage('');
+        }, 1200);
+      } catch (error) {
+        const description = isAxiosError(error)
+          ? (typeof error.response?.data?.message === 'string'
+            ? error.response.data.message
+            : Array.isArray(error.response?.data?.message)
+              ? error.response.data.message.join(' ')
+              : 'Invalid credentials. Please try again.')
+          : error instanceof Error
+            ? error.message
+            : 'Unable to sign you in right now. Please try again later.';
+
+        setSignInMessage(description);
+        toast({
+          title: 'Unable to sign in',
+          description,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setIsSigningIn(false);
+      }
+    },
+    [authLogin, refreshUser, signInForm.email, signInForm.password, toast],
+  );
+
+  const handleGenerateDepositTicket = useCallback(async () => {
+    if (!isAuthenticated) {
+      handleOpenSignInFlow();
+      toast({
+        title: 'Sign in required',
+        description: 'Log in to generate deposit instructions for your vault.',
+        status: 'info',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!selectedCryptoType) {
+      toast({
+        title: 'Select a supported asset',
+        description: 'Choose a cryptocurrency deposit lane to generate instructions.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const sanitizedInput = depositAmountInput.replace(/[^0-9.]/g, '');
+    const numericAmount = Number.parseFloat(sanitizedInput);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      toast({
+        title: 'Enter a valid amount',
+        description: 'Provide a positive USD amount to register your deposit ticket.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      const roundedAmount = Number(numericAmount.toFixed(2));
+      const payload = await initiateDepositMutation.mutateAsync({
+        amount: roundedAmount,
+        cryptoType: selectedCryptoType,
+      });
+
+      const normalizedAmount = Number(payload.amount);
+      const ticket: DepositTicket = {
+        transactionId: payload.transactionId,
+        depositAddress: payload.depositAddress,
+        amount: Number.isFinite(normalizedAmount) ? normalizedAmount : roundedAmount,
+        cryptoType: payload.cryptoType,
+        minConfirmations: payload.minConfirmations,
+      };
+
+      setDepositTicket(ticket);
+      setDepositAmountInput(ticket.amount.toFixed(2));
+      setConfirmAmountInput(ticket.amount.toFixed(2));
+      setConfirmTxHash('');
+
+      toast({
+        title: 'Deposit ticket created',
+        description: `Transaction reference ${ticket.transactionId} logged. Send funds to complete the deposit.`,
+        status: 'success',
+        duration: 6000,
+        isClosable: true,
+      });
+
+      queryClient.invalidateQueries(['deposit-history']);
+    } catch (error) {
+      const description = isAxiosError(error)
+        ? error.response?.data?.message ?? error.message
+        : error instanceof Error
+          ? error.message
+          : 'We were unable to create a deposit ticket.';
+      toast({
+        title: 'Unable to create deposit ticket',
+        description,
+        status: 'error',
+        duration: 6000,
+        isClosable: true,
+      });
+    }
+  }, [
+    depositAmountInput,
+    handleOpenSignInFlow,
+    initiateDepositMutation,
+    isAuthenticated,
+    queryClient,
+    selectedCryptoType,
+    toast,
+  ]);
+
+  const handleConfirmDeposit = useCallback(async () => {
+    if (!isAuthenticated) {
+      handleOpenSignInFlow();
+      toast({
+        title: 'Sign in required',
+        description: 'Log in to confirm deposits and update your vault balance.',
+        status: 'info',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!depositTicket) {
+      toast({
+        title: 'Generate a deposit ticket first',
+        description: 'Create a deposit ticket so we know which transfer to verify.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const fallbackAmount = confirmAmountInput.trim().length ? confirmAmountInput : depositAmountInput;
+    const sanitizedAmountInput = fallbackAmount.replace(/[^0-9.]/g, '');
+    const numericAmount = Number.parseFloat(sanitizedAmountInput);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      toast({
+        title: 'Enter a valid amount',
+        description: 'Confirming a deposit requires a positive USD amount.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const trimmedHash = confirmTxHash.trim();
+    if (trimmedHash.length < 6) {
+      toast({
+        title: 'Add the transaction hash',
+        description: 'Include the blockchain transaction hash so our desk can verify your deposit.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      const result = await confirmDepositMutation.mutateAsync({
+        transactionId: depositTicket.transactionId,
+        txHash: trimmedHash,
+        amount: Number(numericAmount.toFixed(6)),
+      });
+
+      if (result.success && result.status === 'COMPLETED') {
+        toast({
+          title: 'Deposit confirmed',
+          description: result.message,
+          status: 'success',
+          duration: 6000,
+          isClosable: true,
+        });
+        setDepositTicket(null);
+        await refreshUser();
+      } else {
+        toast({
+          title: 'Deposit awaiting confirmations',
+          description: result.message,
+          status: 'info',
+          duration: 6000,
+          isClosable: true,
+        });
+      }
+
+      setConfirmTxHash('');
+      setConfirmAmountInput('');
+      queryClient.invalidateQueries(['deposit-history']);
+    } catch (error) {
+      const description = isAxiosError(error)
+        ? error.response?.data?.message ?? error.message
+        : error instanceof Error
+          ? error.message
+          : 'We were unable to confirm your deposit.';
+      toast({
+        title: 'Unable to confirm deposit',
+        description,
+        status: 'error',
+        duration: 6000,
+        isClosable: true,
+      });
+    }
+  }, [
+    confirmAmountInput,
+    confirmDepositMutation,
+    confirmTxHash,
+    depositAmountInput,
+    depositTicket,
+    handleOpenSignInFlow,
+    isAuthenticated,
+    queryClient,
+    refreshUser,
+    toast,
+  ]);
 
   const handleDashToggle = useCallback(() => {
     if (!isAuthenticated) {
@@ -722,66 +1156,72 @@ const CryptoInvestmentPlatform = () => {
     setSignupMessage(`A new verification code has been sent to ${signupForm.email}.`);
   }, [signupForm.email]);
 
-  const handleSignInSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      if (!registeredProfile) {
-        setSignInMessage('No profile found. Please sign up to create your trading account.');
-        return;
-      }
-
-      const enteredEmail = signInForm.email.trim().toLowerCase();
-      const storedEmail = registeredProfile.email.trim().toLowerCase();
-
-      if (enteredEmail !== storedEmail || signInForm.password !== registeredProfile.password) {
-        setSignInMessage('Incorrect email or password. Please try again.');
-        return;
-      }
-
-      setIsAuthenticated(true);
-      setShowSignInFlow(false);
-      setSignInMessage('');
+  const handleVerifyCode = useCallback(() => {
+    if (enteredCode.trim() === verificationCode.trim()) {
+      const profile = {
+        fullName: signupForm.fullName,
+        email: signupForm.email,
+        password: signupForm.password,
+      };
+      setRegisteredProfile(profile);
       setSignupForm({
-        fullName: registeredProfile.fullName,
-        email: registeredProfile.email,
-        password: registeredProfile.password,
-        confirmPassword: registeredProfile.password,
+        fullName: profile.fullName,
+        email: profile.email,
+        password: profile.password,
+        confirmPassword: profile.password,
       });
-      persistAuth(registeredProfile, true);
-    },
-    [persistAuth, registeredProfile, signInForm.email, signInForm.password],
-  );
+      setSignInForm({ email: profile.email, password: '' });
+      persistAuth(profile, true);
+      setIsAuthenticated(true);
+      window.setTimeout(() => {
+        setShowSignupFlow(false);
+        setSignupMessage('');
+      }, 1600);
+    } else {
+      setSignupMessage('The verification code is incorrect. Please try again.');
+    }
+  }, [enteredCode, persistAuth, signupForm.email, signupForm.fullName, signupForm.password, verificationCode]);
 
-  const handleVerifyCode = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      if (enteredCode.trim() === verificationCode.trim()) {
-        setSignupStep('success');
-        setSignupMessage('Email verified successfully. Redirecting to your dashboard...');
-        const profile: RegisteredProfile = {
-          fullName: signupForm.fullName,
-          email: signupForm.email,
-          password: signupForm.password,
-        };
-        setRegisteredProfile(profile);
-        setSignupForm({
-          fullName: profile.fullName,
-          email: profile.email,
-          password: profile.password,
-          confirmPassword: profile.password,
+  const handleCopyAddress = useCallback(
+    async (asset: DepositAssetKey, overrideAddress?: string) => {
+      const fallback = DEPOSIT_ADDRESSES[asset];
+      const address = overrideAddress ?? fallback;
+      if (!address) {
+        toast({
+          title: 'No address available',
+          description: 'Select another asset or try again later.',
+          status: 'warning',
+          duration: 5000,
+          isClosable: true,
         });
-        setSignInForm({ email: profile.email, password: '' });
-        persistAuth(profile, true);
-        setIsAuthenticated(true);
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(address);
+        setCopiedAsset(asset);
         window.setTimeout(() => {
-          setShowSignupFlow(false);
-          setSignupMessage('');
-        }, 1600);
-      } else {
-        setSignupMessage('The verification code is incorrect. Please try again.');
+          setCopiedAsset((current) => (current === asset ? null : current));
+        }, 2200);
+        toast({
+          title: 'Address copied',
+          description: 'Paste the address into your wallet to initiate the transfer.',
+          status: 'success',
+          duration: 4000,
+          isClosable: true,
+        });
+      } catch (error) {
+        console.error('Failed to copy address', error);
+        toast({
+          title: 'Copy failed',
+          description: 'Please copy the address manually.',
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
       }
     },
-    [enteredCode, persistAuth, signupForm.email, signupForm.fullName, signupForm.password, verificationCode],
+    [toast],
   );
 
   const handleLogout = useCallback(() => {
@@ -3409,38 +3849,268 @@ const CryptoInvestmentPlatform = () => {
                 </div>
 
                 {(() => {
-                  const meta = DEPOSIT_METADATA[selectedDepositAsset];
-                  const address = DEPOSIT_ADDRESSES[selectedDepositAsset];
-                  return (
-                    <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                      <h4 className="text-xl font-semibold text-white">{meta.label}</h4>
-                      <p className="mt-2 text-sm text-slate-300">{meta.description}</p>
-                      <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Deposit Address</p>
-                        <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                          <code className="break-all rounded-xl bg-slate-900/90 px-3 py-2 text-sm text-slate-100">
-                            {address}
-                          </code>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/60 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100"
-                            onClick={() => handleCopyAddress(selectedDepositAsset)}
-                          >
-                            Copy Address
-                            <Copy className="h-4 w-4" />
-                          </button>
+                  const meta = selectedDepositMeta;
+                  const cryptoType = meta.cryptoType ?? null;
+                  const address = depositTicket?.depositAddress ?? depositAddressData?.address ?? null;
+                  const minConfirmations = depositTicket?.minConfirmations ?? depositAddressData?.minConfirmations ?? null;
+
+                  if (!isAuthenticated) {
+                    return (
+                      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                        <h4 className="text-xl font-semibold text-white">{meta.label}</h4>
+                        <p className="mt-2 text-sm text-slate-300">{meta.description}</p>
+                        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/80 p-5 text-sm text-slate-300">
+                          Sign in to generate personalized deposit instructions and track confirmations in real time.
                         </div>
-                        {copiedAsset === selectedDepositAsset && (
-                          <p className="mt-2 text-xs text-emerald-300">Address copied. Paste it in your sending wallet to proceed.</p>
-                        )}
+                        <button
+                          type="button"
+                          onClick={handleOpenSignInFlow}
+                          className="mt-4 inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500"
+                        >
+                          Sign In to Fund Your Vault
+                        </button>
                       </div>
-                      <p className="mt-3 text-xs text-slate-400">{meta.note}</p>
-                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                        {depositSteps.map((step) => (
-                          <div key={step} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
-                            {step}
+                    );
+                  }
+
+                  if (!cryptoType) {
+                    return (
+                      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 space-y-4">
+                        <h4 className="text-xl font-semibold text-white">{meta.label}</h4>
+                        <p className="text-sm text-slate-300">{meta.description}</p>
+                        <p className="text-xs text-slate-400">{meta.note}</p>
+                        <a
+                          href={DEPOSIT_ADDRESSES[selectedDepositAsset]}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center justify-center rounded-xl border border-emerald-500/60 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100"
+                        >
+                          Launch Card Checkout
+                        </a>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                        <div className="grid gap-6 lg:grid-cols-2">
+                          <div className="space-y-4">
+                            <div>
+                              <h4 className="text-lg font-semibold text-white">Generate Deposit Ticket</h4>
+                              <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">{meta.network}</p>
+                            </div>
+                            <label className="block text-sm font-semibold text-slate-200">
+                              Deposit Amount (USD)
+                              <input
+                                type="number"
+                                min="10"
+                                step="0.01"
+                                value={depositAmountInput}
+                                onChange={(event) => setDepositAmountInput(event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                                placeholder="e.g. 2500.00"
+                                disabled={initiateDepositMutation.isLoading}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleGenerateDepositTicket}
+                              disabled={initiateDepositMutation.isLoading}
+                              className={`inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition ${initiateDepositMutation.isLoading
+                                ? 'bg-emerald-900/50 text-emerald-200/60'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                }`}
+                            >
+                              {initiateDepositMutation.isLoading ? 'Generating Ticket…' : 'Generate Deposit Ticket'}
+                            </button>
+                            {depositTicket ? (
+                              <div className="space-y-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-100">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="font-semibold">Ticket ID</span>
+                                  <span className="font-mono">{depositTicket.transactionId}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span>Amount</span>
+                                  <span className="font-semibold text-emerald-200">{formatCurrency(depositTicket.amount)}</span>
+                                </div>
+                                {minConfirmations ? (
+                                  <div className="flex items-center justify-between">
+                                    <span>Confirmations</span>
+                                    <span>{minConfirmations}</span>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            <p className="text-xs text-slate-400">{meta.note}</p>
                           </div>
-                        ))}
+
+                          <div className="space-y-4">
+                            <h4 className="text-lg font-semibold text-white">Confirm Deposit</h4>
+                            <label className="block text-sm font-semibold text-slate-200">
+                              Blockchain Transaction Hash
+                              <input
+                                type="text"
+                                value={confirmTxHash}
+                                onChange={(event) => setConfirmTxHash(event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                                placeholder="Paste the tx hash from your wallet"
+                                disabled={confirmDepositMutation.isLoading}
+                              />
+                            </label>
+                            <label className="block text-sm font-semibold text-slate-200">
+                              Amount Confirmed (USD)
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={confirmAmountInput}
+                                onChange={(event) => setConfirmAmountInput(event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                                placeholder="Match the amount you sent"
+                                disabled={confirmDepositMutation.isLoading}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleConfirmDeposit}
+                              disabled={confirmDepositMutation.isLoading}
+                              className={`inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition ${confirmDepositMutation.isLoading
+                                ? 'bg-slate-800 text-slate-300/60'
+                                : 'bg-slate-100 text-slate-900 hover:bg-white'
+                                }`}
+                            >
+                              {confirmDepositMutation.isLoading ? 'Submitting Confirmation…' : 'Confirm Deposit'}
+                            </button>
+                            <p className="text-xs text-slate-400">
+                              Include your transaction hash so our treasury desk can credit your vault once confirmations clear.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Deposit Address</p>
+                          {isDepositAddressLoading && !address ? (
+                            <div className="mt-4 flex items-center justify-center">
+                              <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                            </div>
+                          ) : depositAddressErrorMessage && !address ? (
+                            <p className="mt-3 text-xs text-red-300">{depositAddressErrorMessage}</p>
+                          ) : address ? (
+                                <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                  <code className="break-all rounded-xl bg-slate-900/90 px-3 py-2 text-sm text-slate-100">
+                                    {address}
+                                  </code>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/60 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100"
+                                    onClick={() => handleCopyAddress(selectedDepositAsset, address)}
+                                  >
+                                    Copy Address
+                                    <Copy className="h-4 w-4" />
+                                  </button>
+                                </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-slate-400">Generate a deposit ticket to view address details.</p>
+                          )}
+                          {copiedAsset === selectedDepositAsset && address ? (
+                            <p className="mt-2 text-xs text-emerald-300">Address copied. Paste it in your sending wallet to proceed.</p>
+                          ) : null}
+                          {minConfirmations ? (
+                            <p className="mt-2 text-xs text-slate-500">Network confirmations required: {minConfirmations}</p>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                          {depositSteps.map((step) => (
+                            <div key={step} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+                              {step}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <h5 className="text-lg font-semibold text-white">Recent Deposits</h5>
+                          {isDepositHistoryFetching ? (
+                            <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                          ) : null}
+                        </div>
+                        {isDepositHistoryLoading ? (
+                          <div className="flex justify-center py-6">
+                            <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                          </div>
+                        ) : depositHistoryErrorMessage ? (
+                          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+                            {depositHistoryErrorMessage}
+                          </div>
+                        ) : depositHistory.length === 0 ? (
+                          <p className="mt-4 text-sm text-slate-300">No deposits recorded yet. Generate a ticket to begin funding your vault.</p>
+                        ) : (
+                          <div className="mt-4 overflow-x-auto">
+                            <table className="min-w-full divide-y divide-slate-800 text-xs text-slate-200">
+                              <thead className="bg-slate-900/80 text-[11px] uppercase tracking-wide text-slate-500">
+                                <tr>
+                                  <th className="px-4 py-3 text-left">Asset</th>
+                                  <th className="px-4 py-3 text-left">Amount</th>
+                                  <th className="px-4 py-3 text-left">Status</th>
+                                  <th className="px-4 py-3 text-left">Confirmations</th>
+                                  <th className="px-4 py-3 text-left">Hash</th>
+                                  <th className="px-4 py-3 text-left">Created</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800">
+                                {depositHistory.map((entry) => {
+                                  const normalizedStatus = (entry.status ?? 'PENDING').toUpperCase() as DepositStatus;
+                                  const numericAmount = typeof entry.amount === 'string' ? Number(entry.amount) : entry.amount;
+                                  const amountDisplay = Number.isFinite(numericAmount)
+                                    ? formatCurrency(Number(numericAmount))
+                                    : typeof entry.amount === 'string'
+                                      ? entry.amount
+                                      : '—';
+                                  const statusMeta = DEPOSIT_STATUS_META[normalizedStatus] ?? DEPOSIT_STATUS_META.PENDING;
+                                  const hashDisplay = entry.txHash
+                                    ? entry.txHash.length > 20
+                                      ? `${entry.txHash.slice(0, 10)}…${entry.txHash.slice(-6)}`
+                                      : entry.txHash
+                                    : normalizedStatus === 'PENDING'
+                                      ? '—'
+                                      : 'Submitted';
+                                  const createdAt = (() => {
+                                    const date = new Date(entry.createdAt);
+                                    return Number.isNaN(date.getTime())
+                                      ? entry.createdAt
+                                      : date.toLocaleString();
+                                  })();
+
+                                  return (
+                                    <tr key={entry.id} className="hover:bg-slate-900/60">
+                                      <td className="px-4 py-3 font-semibold">
+                                        {entry.cryptoType ?? '—'}
+                                      </td>
+                                      <td className="px-4 py-3">{amountDisplay}</td>
+                                      <td className="px-4 py-3">
+                                        <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${statusMeta.className}`}>
+                                          {statusMeta.label}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {normalizedStatus === 'AWAITING_CONFIRMATION'
+                                          ? `${entry.confirmations ?? 0}/${entry.confirmationTarget ?? '—'}`
+                                          : normalizedStatus === 'COMPLETED'
+                                            ? 'Cleared'
+                                            : '—'}
+                                      </td>
+                                      <td className="px-4 py-3 font-mono text-[11px] text-slate-400">{hashDisplay}</td>
+                                      <td className="px-4 py-3 text-slate-400">{createdAt}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -4455,9 +5125,13 @@ const CryptoInvestmentPlatform = () => {
 
               <button
                 type="submit"
-                className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-blue-500 px-5 py-3 font-semibold text-white transition hover:from-emerald-400 hover:to-blue-400"
+                disabled={isSigningIn}
+                className={`w-full rounded-xl px-5 py-3 font-semibold text-white transition ${isSigningIn
+                  ? 'cursor-not-allowed bg-slate-700 text-slate-300'
+                  : 'bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-400 hover:to-blue-400'
+                  }`}
               >
-                Log In & Continue
+                {isSigningIn ? 'Signing In…' : 'Log In & Continue'}
               </button>
 
               {signInMessage && <p className="text-sm text-emerald-200 text-center">{signInMessage}</p>}

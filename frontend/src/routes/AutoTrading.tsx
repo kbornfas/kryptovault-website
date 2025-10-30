@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { API_ENDPOINTS } from '@/config/api';
+import apiClient from '@/lib/apiClient';
+import { useToast } from '@chakra-ui/react';
+import { isAxiosError } from 'axios';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 
 type MarketCoin = {
@@ -15,14 +20,19 @@ type MarketCoin = {
   };
 };
 
-type AutoSessionStatus = 'idle' | 'running' | 'completed' | 'stopped';
+type AutomationSessionStatus = 'RUNNING' | 'STOPPED' | 'COMPLETED';
 
-type AutoSession = {
-  status: AutoSessionStatus;
-  runsTarget: number;
+type AutomationSession = {
+  id: string;
+  userId: string;
+  runsRequested: number;
   runsCompleted: number;
-  stake: number;
+  stakePerRun: number;
+  strategyPreset: string | null;
+  currencies: string[];
+  status: AutomationSessionStatus;
   startedAt: string;
+  stoppedAt: string | null;
   lastUpdated: string;
 };
 
@@ -53,9 +63,9 @@ const AutoTrading = () => {
   const [runs, setRuns] = useState(DEFAULT_RUNS);
   const [stakeInput, setStakeInput] = useState(DEFAULT_STAKE.toString());
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [sessions, setSessions] = useState<Record<string, AutoSession>>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const timersRef = useRef<Record<string, number>>({});
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
 
   const handleBack = () => {
@@ -93,12 +103,98 @@ const AutoTrading = () => {
     fetchCoins();
   }, []);
 
-  useEffect(() => {
-    return () => {
-      Object.values(timersRef.current).forEach((timerId) => window.clearInterval(timerId));
-      timersRef.current = {};
-    };
-  }, []);
+  const {
+    data: automationSessions = [],
+    isLoading: isSessionsLoading,
+    isError: isSessionsError,
+    error: automationSessionsError,
+    isFetching: isSessionsFetching,
+  } = useQuery<AutomationSession[]>(
+    ['automation-sessions'],
+    async () => {
+      const response = await apiClient.get<AutomationSession[]>(`${API_ENDPOINTS.AUTOMATION}/sessions`);
+      return response.data;
+    },
+    {
+      refetchInterval: 4_000,
+      refetchIntervalInBackground: true,
+      retry: (failureCount, error) => {
+        if (isAxiosError(error) && error.response?.status === 401) {
+          return false;
+        }
+        return failureCount < 2;
+      },
+    },
+  );
+
+  const coinById = useMemo(() => {
+    const map: Record<string, MarketCoin> = {};
+    coins.forEach((coin) => {
+      map[coin.id] = coin;
+    });
+    return map;
+  }, [coins]);
+
+  const automationErrorMessage = useMemo(() => {
+    if (!isSessionsError) {
+      return null;
+    }
+
+    if (isAxiosError(automationSessionsError)) {
+      if (automationSessionsError.response?.status === 401) {
+        return 'Sign in again to resume monitoring automation runs.';
+      }
+      return automationSessionsError.response?.data?.message ?? automationSessionsError.message;
+    }
+
+    if (automationSessionsError instanceof Error) {
+      return automationSessionsError.message;
+    }
+
+    return 'We were unable to sync automation sessions. Please try again.';
+  }, [automationSessionsError, isSessionsError]);
+
+  const sessionsBySymbol = useMemo(() => {
+    const map: Record<string, AutomationSession> = {};
+    automationSessions.forEach((session) => {
+      session.currencies.forEach((currency) => {
+        const symbol = currency.toUpperCase();
+        const existing = map[symbol];
+        if (!existing || new Date(session.startedAt).getTime() > new Date(existing.startedAt).getTime()) {
+          map[symbol] = session;
+        }
+      });
+    });
+    return map;
+  }, [automationSessions]);
+
+  const runningSessions = useMemo(
+    () => automationSessions.filter((session) => session.status === 'RUNNING'),
+    [automationSessions],
+  );
+
+  const startAutomationMutation = useMutation(
+    (payload: { currency: string; runs: number; stakePerRun: number }) =>
+      apiClient.post(`${API_ENDPOINTS.AUTOMATION}/start`, {
+        runs: payload.runs,
+        currencies: [payload.currency],
+        stakePerRun: payload.stakePerRun,
+      }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['automation-sessions']);
+      },
+    },
+  );
+
+  const stopAutomationMutation = useMutation(
+    (sessionId: string) => apiClient.post(`${API_ENDPOINTS.AUTOMATION}/stop`, { sessionId }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['automation-sessions']);
+      },
+    },
+  );
 
   const stakeValue = useMemo(() => {
     const numeric = Number(stakeInput.replace(/[^0-9.]/g, ''));
@@ -108,13 +204,13 @@ const AutoTrading = () => {
     return Number(numeric.toFixed(2));
   }, [stakeInput]);
 
-  const isRunning = useMemo(
-    () => Object.values(sessions).some((session) => session.status === 'running'),
-    [sessions],
-  );
+  const isRunning = runningSessions.length > 0;
+  const startInFlight = startAutomationMutation.isLoading;
+  const stopInFlight = stopAutomationMutation.isLoading;
 
-  const disableStart = !selectedIds.length || runs < 1 || stakeValue <= 0 || isRunning;
-  const disableStop = !isRunning;
+  const disableStart =
+    !selectedIds.length || runs < 1 || stakeValue <= 0 || isRunning || startInFlight || stopInFlight;
+  const disableStop = !isRunning || startInFlight || stopInFlight;
 
   const toggleSelection = (coinId: string) => {
     setSelectedIds((prev) =>
@@ -125,91 +221,90 @@ const AutoTrading = () => {
   const selectAll = () => setSelectedIds(coins.map((coin) => coin.id));
   const clearAll = () => setSelectedIds([]);
 
-  const clearTimer = (coinId: string) => {
-    const timerId = timersRef.current[coinId];
-    if (timerId) {
-      window.clearInterval(timerId);
-      delete timersRef.current[coinId];
-    }
-  };
-
-  const startSessionForCoin = (coinId: string, runsTarget: number, stake: number) => {
-    clearTimer(coinId);
-
-    const intervalId = window.setInterval(() => {
-      setSessions((previous) => {
-        const current = previous[coinId];
-        if (!current) {
-          window.clearInterval(intervalId);
-          delete timersRef.current[coinId];
-          return previous;
-        }
-
-        if (current.status !== 'running') {
-          window.clearInterval(intervalId);
-          delete timersRef.current[coinId];
-          return previous;
-        }
-
-        const runsCompleted = Math.min(current.runsTarget, current.runsCompleted + 1);
-        const completed = runsCompleted >= current.runsTarget;
-        const updated: AutoSession = {
-          ...current,
-          runsCompleted,
-          status: completed ? 'completed' : 'running',
-          lastUpdated: new Date().toISOString(),
-        };
-
-        const snapshot = { ...previous, [coinId]: updated };
-        if (completed) {
-          window.clearInterval(intervalId);
-          delete timersRef.current[coinId];
-        }
-        return snapshot;
-      });
-    }, 2000 + Math.random() * 1500);
-
-    timersRef.current[coinId] = intervalId;
-    setSessions((previous) => ({
-      ...previous,
-      [coinId]: {
-        status: 'running',
-        runsTarget,
-        runsCompleted: 0,
-        stake,
-        startedAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-      },
-    }));
-  };
-
-  const handleStart = () => {
+  const handleStart = async () => {
     setStatusMessage(null);
     if (disableStart) {
       setStatusMessage('Select at least one asset and enter valid run and stake values to launch the robot.');
       return;
     }
 
-    selectedIds.forEach((coinId) => startSessionForCoin(coinId, runs, stakeValue));
-    setStatusMessage('Automation robot engaged. Progress will update live as each run completes.');
+    try {
+      for (const coinId of selectedIds) {
+        const coin = coinById[coinId];
+        if (!coin) {
+          continue;
+        }
+
+        await startAutomationMutation.mutateAsync({
+          currency: coin.symbol.toUpperCase(),
+          runs,
+          stakePerRun: stakeValue,
+        });
+      }
+
+      const successMessage =
+        'Automation robot engaged. Progress will update live as each run completes.';
+      setStatusMessage(successMessage);
+      toast({
+        title: 'Automation started',
+        description: successMessage,
+        status: 'success',
+        duration: 5000,
+        isClosable: true,
+      });
+    } catch (error) {
+      const description = isAxiosError(error)
+        ? error.response?.data?.message ?? error.message
+        : error instanceof Error
+          ? error.message
+          : 'We were unable to start the automation. Please try again.';
+      toast({
+        title: 'Unable to start automation',
+        description,
+        status: 'error',
+        duration: 6000,
+        isClosable: true,
+      });
+    }
   };
 
-  const handleStop = () => {
-    Object.keys(timersRef.current).forEach((coinId) => clearTimer(coinId));
-    setSessions((previous) => {
-      const snapshot: Record<string, AutoSession> = { ...previous };
-      Object.keys(snapshot).forEach((coinId) => {
-        if (snapshot[coinId].status === 'running') {
-          snapshot[coinId] = {
-            ...snapshot[coinId],
-            status: 'stopped',
-            lastUpdated: new Date().toISOString(),
-          };
-        }
+  const handleStop = async () => {
+    setStatusMessage(null);
+
+    if (!runningSessions.length) {
+      setStatusMessage('No automation cycles are currently running.');
+      return;
+    }
+
+    try {
+      for (const session of runningSessions) {
+        await stopAutomationMutation.mutateAsync(session.id);
+      }
+
+      const message =
+        'Automation halted manually. Adjust your parameters and start again whenever you are ready.';
+      setStatusMessage(message);
+      toast({
+        title: 'Automation stopped',
+        description: message,
+        status: 'info',
+        duration: 5000,
+        isClosable: true,
       });
-      return snapshot;
-    });
-    setStatusMessage('Automation halted manually. Adjust your parameters and start again whenever you are ready.');
+    } catch (error) {
+      const description = isAxiosError(error)
+        ? error.response?.data?.message ?? error.message
+        : error instanceof Error
+          ? error.message
+          : 'We were unable to stop the automation run. Please try again.';
+      toast({
+        title: 'Unable to stop automation',
+        description,
+        status: 'error',
+        duration: 6000,
+        isClosable: true,
+      });
+    }
   };
 
   if (loading) {
@@ -365,12 +460,24 @@ const AutoTrading = () => {
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-indigo-950/40 p-6 backdrop-blur-sm">
-        <h2 className="mb-6 text-2xl font-semibold">Cryptocurrency Catalogue</h2>
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-2xl font-semibold">Cryptocurrency Catalogue</h2>
+          <div className="text-xs text-indigo-200/70">
+            {isSessionsLoading || isSessionsFetching ? 'Syncing automation telemetry…' : 'Automation telemetry up to date.'}
+          </div>
+        </div>
+
+        {automationErrorMessage && (
+          <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-xs text-red-200">
+            {automationErrorMessage}
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {coins.map((coin) => {
             const isSelected = selectedIds.includes(coin.id);
-            const session = sessions[coin.id];
-            const progressRatio = session ? session.runsCompleted / session.runsTarget : 0;
+            const session = sessionsBySymbol[coin.symbol.toUpperCase()];
+            const progressRatio = session ? session.runsCompleted / session.runsRequested : 0;
             const progressPercent = Math.min(100, Math.round(progressRatio * 100));
 
             return (
@@ -423,16 +530,16 @@ const AutoTrading = () => {
                     <div className="flex justify-between">
                       <span className="font-semibold">Runs</span>
                       <span>
-                        {session.runsCompleted} / {session.runsTarget}
+                        {session.runsCompleted} / {session.runsRequested}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="font-semibold">Stake</span>
-                      <span>{formatCurrency(session.stake)}</span>
+                      <span>{formatCurrency(session.stakePerRun)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="font-semibold">Status</span>
-                      <span className="capitalize">{session.status}</span>
+                      <span className="capitalize">{session.status.toLowerCase()}</span>
                     </div>
                     <div className="h-2 rounded-full bg-purple-500/20">
                       <div

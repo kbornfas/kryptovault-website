@@ -16,7 +16,10 @@
     "build": "npm run build:backend && npm run build:frontend",
     "install:all": "npm install && cd Backend && npm install && cd ../frontend && npm install",
     "lint:backend": "cd Backend && npm run lint",
-    "lint": "npm run lint:backend"
+    "lint": "npm run lint:backend",
+    "test:backend": "pnpm --filter kryptovault-backend test",
+    "test:frontend": "pnpm --filter frontend test",
+    "test": "npm run test:backend && npm run test:frontend"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

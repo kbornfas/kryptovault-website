@@ -1,4 +1,3 @@
-import { hasAdminAccess } from '@/config/admin';
 import { useAuth } from '@/context/AuthContext';
 import { Navigate, Outlet } from 'react-router-dom';
 
@@ -17,7 +16,7 @@ const AdminRoute = () => {
     return <Navigate to="/login" replace />;
   }
 
-  if (!hasAdminAccess(user.email)) {
+  if (user.role?.toUpperCase() !== 'ADMIN') {
     return <Navigate to="/" replace />;
   }
 

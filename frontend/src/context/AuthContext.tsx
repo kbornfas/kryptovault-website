@@ -1,5 +1,6 @@
 import { API_ENDPOINTS } from '@/config/api';
 import apiClient from '@/lib/apiClient';
+import { isAxiosError } from 'axios';
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useQueryClient } from 'react-query';
 
@@ -11,6 +12,7 @@ export interface AuthUser {
   isEmailVerified?: boolean;
   lastLoginAt?: string | null;
   walletBalance?: string;
+  verificationFailedAttempts?: number;
 }
 
 interface LoginResponse {
@@ -18,13 +20,50 @@ interface LoginResponse {
   user: AuthUser;
 }
 
+interface RegisterResponse {
+  verificationRequired: boolean;
+  email: string;
+  userId: string;
+  verificationExpiresAt: string;
+  debugCode?: string;
+}
+
+interface ResendVerificationResponse {
+  email: string;
+  verificationExpiresAt: string;
+  debugCode?: string;
+  verificationFailedAttempts?: number;
+}
+
+interface PasswordResetRequestResponse {
+  email: string;
+  requested: boolean;
+  message: string;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  signup: (name: string, email: string, password: string) => Promise<RegisterResponse>;
+  verifyEmail: (email: string, code: string) => Promise<AuthUser>;
+  resendVerification: (email: string) => Promise<ResendVerificationResponse>;
+  requestPasswordReset: (email: string) => Promise<PasswordResetRequestResponse>;
+  completePasswordReset: (email: string, token: string, password: string) => Promise<AuthUser>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+}
+
+export class PasswordResetError extends Error {
+  attempts?: number;
+  requiresNewToken?: boolean;
+
+  constructor(message: string, attempts?: number, requiresNewToken?: boolean) {
+    super(message);
+    this.name = 'PasswordResetError';
+    this.attempts = attempts;
+    this.requiresNewToken = requiresNewToken;
+  }
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -110,11 +149,90 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signup = async (name: string, email: string, password: string) => {
-    await apiClient.post(`${API_ENDPOINTS.AUTH}/register`, {
+    const response = await apiClient.post<RegisterResponse>(`${API_ENDPOINTS.AUTH}/register`, {
       name,
       email,
       password,
     });
+
+    return response.data;
+  };
+
+  const verifyEmail = async (email: string, code: string) => {
+    const response = await apiClient.post<LoginResponse>(`${API_ENDPOINTS.AUTH}/verify-email`, {
+      email,
+      code,
+    });
+
+    const { access_token, user: authUser } = response.data;
+    queryClient.clear();
+    setUser(authUser);
+    persistSession(authUser, access_token);
+    return authUser;
+  };
+
+  const resendVerification = async (email: string) => {
+    const response = await apiClient.post<ResendVerificationResponse>(`${API_ENDPOINTS.AUTH}/resend-verification`, {
+      email,
+    });
+
+    return response.data;
+  };
+
+  const requestPasswordReset = async (email: string) => {
+    const response = await apiClient.post<PasswordResetRequestResponse>(
+      `${API_ENDPOINTS.AUTH}/password-reset/request`,
+      { email },
+    );
+
+    return response.data;
+  };
+
+  const completePasswordReset = async (email: string, token: string, password: string) => {
+    try {
+      const response = await apiClient.post<LoginResponse>(
+        `${API_ENDPOINTS.AUTH}/password-reset/complete`,
+        {
+          email,
+          token,
+          password,
+        },
+      );
+
+      const { access_token, user: authUser } = response.data;
+      queryClient.clear();
+      setUser(authUser);
+      persistSession(authUser, access_token);
+      return authUser;
+    } catch (error) {
+      const fallbackMessage =
+        'We could not reset your password. Double-check the token and try again.';
+
+      if (isAxiosError(error)) {
+        const data = (error.response?.data ?? {}) as {
+          message?: string;
+          passwordResetAttempts?: number;
+          requiresNewToken?: boolean;
+        };
+
+        const message =
+          typeof data.message === 'string' && data.message.trim().length > 0
+            ? data.message
+            : fallbackMessage;
+
+        throw new PasswordResetError(
+          message,
+          data.passwordResetAttempts,
+          data.requiresNewToken,
+        );
+      }
+
+      if (error instanceof Error && error.message) {
+        throw new PasswordResetError(error.message);
+      }
+
+      throw new PasswordResetError(fallbackMessage);
+    }
   };
 
   const logout = () => {
@@ -124,7 +242,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login,
+        signup,
+        verifyEmail,
+        resendVerification,
+        requestPasswordReset,
+        completePasswordReset,
+        logout,
+        refreshUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User } from '../auth/user.decorator';
+import { AutomationSessionOwnerGuard } from './automation-session.guard';
 import { AutomationService } from './automation.service';
 import { StartAutomationDto } from './dto/start-automation.dto';
 import { StopAutomationDto } from './dto/stop-automation.dto';
@@ -15,12 +16,18 @@ export class AutomationController {
     return this.automationService.getAvailableCurrencies();
   }
 
+  @Get('sessions')
+  getSessions(@User('id') userId: string) {
+    return this.automationService.getUserSessions(userId);
+  }
+
   @Post('start')
   startAutomation(@User('id') userId: string, @Body() body: StartAutomationDto) {
     return this.automationService.startAutomation(userId, body);
   }
 
   @Post('stop')
+  @UseGuards(AutomationSessionOwnerGuard)
   stopAutomation(@User('id') userId: string, @Body() body: StopAutomationDto) {
     return this.automationService.stopAutomation(userId, body);
   }

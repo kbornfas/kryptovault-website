@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -75,12 +76,53 @@ const SignUp = () => {
     if (!validateForm()) return;
 
     try {
-      await signup(formData.name, formData.email, formData.password);
+      setErrors({});
+      const registration = await signup(formData.name, formData.email, formData.password);
+
+      if (registration.verificationRequired) {
+        localStorage.removeItem('selectedPlan');
+        localStorage.setItem('pendingVerificationEmail', formData.email);
+        localStorage.setItem('pendingVerificationExpiresAt', registration.verificationExpiresAt);
+
+        const routeState: Record<string, unknown> = {
+          email: formData.email,
+          verificationExpiresAt: registration.verificationExpiresAt,
+        };
+
+        if (registration.debugCode && import.meta.env.DEV) {
+          routeState.debugCode = registration.debugCode;
+        }
+
+        navigate('/verify-email', { replace: true, state: routeState });
+        return;
+      }
+
       localStorage.removeItem('selectedPlan');
-      navigate('/');
+      localStorage.removeItem('pendingVerificationEmail');
+      localStorage.removeItem('pendingVerificationExpiresAt');
+
+      navigate('/login', {
+        replace: true,
+        state: {
+          message: 'Account created successfully. You can sign in now.',
+        },
+      });
     } catch (cause) {
+      let message = 'Failed to create account';
+
+      if (isAxiosError<{ message?: string | string[] }>(cause)) {
+        const description = cause.response?.data?.message;
+        if (Array.isArray(description) && description.length > 0) {
+          message = description[0];
+        } else if (typeof description === 'string' && description.trim()) {
+          message = description;
+        }
+      } else if (cause instanceof Error && cause.message.trim()) {
+        message = cause.message;
+      }
+
       setErrors({
-        general: cause instanceof Error ? cause.message : 'Failed to create account'
+        general: message,
       });
     }
   };

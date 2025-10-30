@@ -9,6 +9,11 @@ export type ExtendedUser = User & {
   isEmailVerified?: boolean | null;
   verifiedAt?: Date | null;
   lastLoginAt?: Date | null;
+  verificationFailedAttempts?: number | null;
+  passwordResetToken?: string | null;
+  passwordResetExpiresAt?: Date | null;
+  passwordResetRequestedAt?: Date | null;
+  passwordResetAttempts?: number | null;
 };
 
 @Injectable()
@@ -69,6 +74,7 @@ export class UsersService {
         verifiedAt: new Date(),
         verificationCode: null,
         verificationExpiresAt: null,
+        verificationFailedAttempts: 0,
       } as any,
     });
   }
@@ -87,5 +93,90 @@ export class UsersService {
         lastLoginAt: new Date(),
       } as any,
     });
+  }
+
+  async incrementVerificationFailures(userId: string): Promise<number> {
+    const result = await (this.prisma.user.update as any)({
+      where: { id: userId },
+      data: {
+        verificationFailedAttempts: {
+          increment: 1,
+        },
+      },
+      select: {
+        verificationFailedAttempts: true,
+      },
+    } as any);
+
+    return result?.verificationFailedAttempts ?? 0;
+  }
+
+  async resetVerificationFailures(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        verificationFailedAttempts: 0,
+      } as any,
+    });
+  }
+
+  async savePasswordResetChallenge(userId: string, token: string, expiresAt: Date): Promise<void> {
+    const hashedToken = await bcrypt.hash(token, 10);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordResetToken: hashedToken,
+        passwordResetExpiresAt: expiresAt,
+        passwordResetRequestedAt: new Date(),
+        passwordResetAttempts: 0,
+      } as any,
+    });
+  }
+
+  async validatePasswordResetToken(user: ExtendedUser, token: string): Promise<boolean> {
+    if (!user.passwordResetToken) {
+      return false;
+    }
+    return bcrypt.compare(token, user.passwordResetToken);
+  }
+
+  async clearPasswordResetChallenge(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordResetToken: null,
+        passwordResetExpiresAt: null,
+        passwordResetRequestedAt: null,
+        passwordResetAttempts: 0,
+      } as any,
+    });
+  }
+
+  async updatePassword(userId: string, password: string): Promise<void> {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: hashedPassword,
+      } as any,
+    });
+  }
+
+  async incrementPasswordResetAttempts(userId: string): Promise<number> {
+    const result = await (this.prisma.user.update as any)({
+      where: { id: userId },
+      data: {
+        passwordResetAttempts: {
+          increment: 1,
+        },
+      },
+      select: {
+        passwordResetAttempts: true,
+      },
+    } as any);
+
+    return result?.passwordResetAttempts ?? 0;
   }
 }

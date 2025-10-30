@@ -1,4 +1,15 @@
-import { ArrayMinSize, ArrayUnique, IsArray, IsInt, IsOptional, IsPositive, IsString, Max, Min } from 'class-validator';
+import {
+    ArrayMinSize,
+    ArrayUnique,
+    IsArray,
+    IsInt,
+    IsNumber,
+    IsOptional,
+    IsPositive,
+    IsString,
+    Max,
+    Min,
+} from 'class-validator';
 
 export class StartAutomationDto {
   @IsInt()
@@ -16,4 +27,9 @@ export class StartAutomationDto {
   @IsOptional()
   @IsString()
   strategyPreset?: string;
+
+  @IsNumber({ allowInfinity: false, allowNaN: false })
+  @IsPositive()
+  @Max(100_000_000)
+  stakePerRun!: number;
 }

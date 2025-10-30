@@ -1,4 +1,3 @@
-import { hasAdminAccess } from '@/config/admin';
 import { isAxiosError } from 'axios';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -42,9 +41,35 @@ const Login = () => {
 
     try {
       const authUser = await login(formData.email, formData.password);
-      const destination = hasAdminAccess(authUser.email) ? '/admin' : '/';
+      const isAdmin = authUser.role?.toUpperCase() === 'ADMIN';
+      const destination = isAdmin ? '/admin' : '/';
       navigate(destination, { replace: true });
     } catch (cause) {
+      if (isAxiosError<{ message?: string | string[]; requiresVerification?: boolean; email?: string; verificationExpiresAt?: string; debugCode?: string; verificationFailedAttempts?: number }>(cause)) {
+        const payload = cause.response?.data;
+        if (payload?.requiresVerification && payload.email) {
+          localStorage.setItem('pendingVerificationEmail', payload.email);
+          if (payload.verificationExpiresAt) {
+            localStorage.setItem('pendingVerificationExpiresAt', payload.verificationExpiresAt);
+          }
+          if (import.meta.env.DEV && payload.debugCode) {
+            localStorage.setItem('pendingVerificationDebugCode', payload.debugCode);
+          }
+          if (typeof payload.verificationFailedAttempts === 'number') {
+            localStorage.setItem('verificationExpiredCount', String(payload.verificationFailedAttempts));
+          }
+          navigate('/verify-email', {
+            replace: true,
+            state: {
+              email: payload.email,
+              verificationExpiresAt: payload.verificationExpiresAt,
+              debugCode: payload.debugCode,
+            },
+          });
+          return;
+        }
+      }
+
       let message = 'Invalid email or password';
       if (isAxiosError<{ message?: string | string[] }>(cause)) {
         const description = cause.response?.data?.message;

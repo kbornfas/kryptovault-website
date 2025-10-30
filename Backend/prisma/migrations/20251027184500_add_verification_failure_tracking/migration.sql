@@ -1,0 +1,2 @@
+ALTER TABLE "User"
+ADD COLUMN "verificationFailedAttempts" INTEGER NOT NULL DEFAULT 0;

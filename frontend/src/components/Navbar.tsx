@@ -1,11 +1,12 @@
-import { hasAdminAccess } from '@/config/admin';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import NotificationBell from './notifications/NotificationBell';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const { pathname } = useLocation();
   const showLinks = pathname !== '/about';
+  const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
 
   return (
     <nav className="flex justify-between items-center px-8 py-4 bg-indigo-900 shadow-md">
@@ -20,7 +21,7 @@ export default function Navbar() {
             <li><Link to="/contact" className="hover:text-purple-400">Contact</Link></li>
             <li><Link to="/auto-trading" className="hover:text-purple-400">Auto Trading</Link></li>
             <li><Link to="/trade-history" className="hover:text-purple-400">Trade History</Link></li>
-            {user && hasAdminAccess(user.email) && (
+            {isAdmin && (
               <li><Link to="/admin" className="hover:text-purple-400">Admin</Link></li>
             )}
           </ul>
@@ -28,6 +29,7 @@ export default function Navbar() {
         <div className="flex gap-4 items-center">
           {user ? (
             <>
+              <NotificationBell />
               <span className="text-gray-200">Welcome, {user.name}</span>
               <button
                 onClick={logout}

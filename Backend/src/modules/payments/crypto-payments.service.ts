@@ -1,7 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { CryptoType } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CryptoType, Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BlockchainVerificationService, VerificationResult } from './blockchain-verification.service';
+import { CRYPTO_MIN_CONFIRMATIONS } from './constants';
+import { TRANSACTION_STATUS } from './status.constants';
 
 const WALLET_ADDRESSES = {
   BTC: 'bc1q0pu7d8ku2wa36zx3wace2t4rx60a55j24c4vxp',
@@ -12,22 +16,46 @@ const WALLET_ADDRESSES = {
   TRX: 'TYM2eXoatzLPmxcjWSJ2s7w7ChRMKXxiuj',
 };
 
-const MIN_CONFIRMATIONS = {
-  BTC: 3,
-  ETH: 12,
-  USDT: 12,
-  SOL: 32,
-  BNB: 12,
-  TRX: 20,
+type DepositTransactionEntity = {
+  id: string;
+  userId: string;
+  type: TransactionType;
+  amount: Prisma.Decimal;
+  status: string;
+  cryptoType: CryptoType | null;
+  txHash: string | null;
+  walletAddress: string | null;
+  confirmations: number;
+  confirmationTarget: number;
+  lastVerifiedAt: Date | null;
 };
+
+export interface ConfirmDepositResult {
+  success: boolean;
+  status: string;
+  message: string;
+  confirmations: number;
+  confirmationTarget: number;
+}
+
+export interface ConfirmDepositPayload {
+  transactionId: string;
+  txHash: string;
+  amount?: number;
+}
 
 @Injectable()
 export class CryptoPaymentsService {
+  private readonly allowUnverifiedDeposits: boolean;
+
   constructor(
-    private prisma: PrismaService,
-    private notificationsService: NotificationsService,
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+    private readonly verificationService: BlockchainVerificationService,
+    private readonly configService: ConfigService,
   ) {
-    this.initializeWallets();
+    this.allowUnverifiedDeposits = this.configService.get<string>('ALLOW_UNVERIFIED_DEPOSITS') === 'true';
+    void this.initializeWallets();
   }
 
   private async initializeWallets() {
@@ -64,15 +92,19 @@ export class CryptoPaymentsService {
     }
 
     // Create a pending transaction
-    const transaction = await this.prisma.transaction.create({
+    const amountDecimal = new Prisma.Decimal(amount);
+    const transaction = await (this.prisma as unknown as { transaction: any }).transaction.create({
       data: {
         userId,
-        type: 'DEPOSIT',
-        amount,
-        status: 'PENDING',
+        type: TransactionType.DEPOSIT,
+        amount: amountDecimal,
+        status: TRANSACTION_STATUS.PENDING,
         cryptoType,
         walletAddress: wallet.address,
         description: `Deposit of ${amount} ${cryptoType}`,
+        confirmations: 0,
+        confirmationTarget: CRYPTO_MIN_CONFIRMATIONS[cryptoType],
+        lastVerifiedAt: null,
       },
     });
 
@@ -88,59 +120,84 @@ export class CryptoPaymentsService {
       depositAddress: wallet.address,
       amount,
       cryptoType,
-      minConfirmations: MIN_CONFIRMATIONS[cryptoType],
+      minConfirmations: CRYPTO_MIN_CONFIRMATIONS[cryptoType],
     };
   }
 
-  async confirmDeposit(
-    txHash: string,
-    userId: string,
-    amount: number,
-    cryptoType: CryptoType,
-  ) {
-    const transaction = await this.prisma.transaction.findFirst({
+  async confirmDeposit(userId: string, payload: ConfirmDepositPayload): Promise<ConfirmDepositResult> {
+    const transaction = (await (this.prisma as unknown as { transaction: any }).transaction.findUnique({
+      where: { id: payload.transactionId },
+    })) as DepositTransactionEntity | null;
+
+    if (!transaction || transaction.userId !== userId) {
+      throw new NotFoundException('Deposit ticket not found. Regenerate instructions and try again.');
+    }
+
+    if (transaction.type !== TransactionType.DEPOSIT) {
+      throw new BadRequestException('Only deposit transactions can be confirmed through this endpoint.');
+    }
+
+    if (!transaction.cryptoType) {
+      throw new BadRequestException('This deposit is missing the associated asset. Contact support for assistance.');
+    }
+
+    if (transaction.status === TRANSACTION_STATUS.COMPLETED) {
+      return {
+        success: true,
+        status: transaction.status,
+        message: 'Deposit already confirmed and credited.',
+        confirmations: transaction.confirmations ?? 0,
+        confirmationTarget: transaction.confirmationTarget ?? CRYPTO_MIN_CONFIRMATIONS[transaction.cryptoType],
+      };
+    }
+
+    if (transaction.status === TRANSACTION_STATUS.REJECTED) {
+      throw new BadRequestException('This deposit attempt was previously rejected. Generate a new ticket.');
+    }
+
+    if (transaction.txHash) {
+      throw new BadRequestException('A blockchain hash is already associated with this deposit.');
+    }
+
+    const duplicateHash = await (this.prisma as unknown as { transaction: any }).transaction.findFirst({
       where: {
-        userId,
-        cryptoType,
-        status: 'PENDING',
+        txHash: payload.txHash,
       },
     });
 
-    if (!transaction) {
-      throw new NotFoundException('No pending deposit found');
+    if (duplicateHash) {
+      throw new BadRequestException('This blockchain transaction is already linked to another deposit.');
     }
 
-    // In a production environment, you would verify the transaction on the blockchain here
-    // This is a simplified version
-    await this.prisma.$transaction(async (prisma) => {
-      // Update transaction
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'COMPLETED',
-          txHash,
-        },
-      });
+    if (payload.amount !== undefined) {
+      const requested = this.toNumber(transaction.amount);
+      if (requested !== null && Math.abs(requested - payload.amount) > 0.5) {
+        throw new BadRequestException('The amount you entered does not match your deposit ticket.');
+      }
+    }
 
-      // Update user's wallet balance
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          walletBalance: {
-            increment: amount,
-          },
-        },
-      });
+    const confirmationTarget = this.resolveMinimumConfirmations(transaction.cryptoType);
+
+    await (this.prisma as unknown as { transaction: any }).transaction.update({
+      where: { id: transaction.id },
+      data: {
+        txHash: payload.txHash,
+        status: TRANSACTION_STATUS.AWAITING_CONFIRMATION,
+        confirmations: 0,
+        confirmationTarget,
+        lastVerifiedAt: new Date(),
+      },
     });
 
-    // Send confirmation notification
-    await this.notificationsService.sendNotification({
-      userId,
-      title: 'Deposit Confirmed',
-      message: `Your deposit of ${amount} ${cryptoType} has been confirmed and added to your balance.`,
+    const verification = await this.verificationService.verifyDeposit({
+      txHash: payload.txHash,
+      cryptoType: transaction.cryptoType,
+      expectedAmount: this.toNumber(transaction.amount) ?? payload.amount ?? 0,
+      expectedAddress: transaction.walletAddress,
+      minConfirmations: confirmationTarget,
     });
 
-    return { success: true, message: 'Deposit confirmed successfully' };
+    return this.handleVerificationResult(transaction, verification, confirmationTarget);
   }
 
   async getDepositAddress(cryptoType: CryptoType) {
@@ -155,19 +212,178 @@ export class CryptoPaymentsService {
     return {
       address: wallet.address,
       cryptoType,
-      minConfirmations: MIN_CONFIRMATIONS[cryptoType],
+      minConfirmations: CRYPTO_MIN_CONFIRMATIONS[cryptoType],
     };
   }
 
   async getUserDeposits(userId: string) {
-    return this.prisma.transaction.findMany({
+    return (this.prisma as unknown as { transaction: any }).transaction.findMany({
       where: {
         userId,
-        type: 'DEPOSIT',
+        type: TransactionType.DEPOSIT,
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
+  }
+
+  private resolveMinimumConfirmations(cryptoType: CryptoType | null): number {
+    if (!cryptoType) {
+      return 12;
+    }
+
+    return CRYPTO_MIN_CONFIRMATIONS[cryptoType] ?? 12;
+  }
+
+  private async handleVerificationResult(
+    transaction: DepositTransactionEntity,
+    verification: VerificationResult,
+    confirmationTarget: number,
+  ): Promise<ConfirmDepositResult> {
+    if (verification.status === 'UNCONFIGURED') {
+      if (!this.allowUnverifiedDeposits) {
+        throw new BadRequestException(
+          'Deposit verification is temporarily unavailable. Please retry later or contact support.',
+        );
+      }
+
+      await this.finalizeDeposit(transaction, confirmationTarget, 0, 'Manual confirmation (verification disabled)');
+
+      return {
+        success: true,
+        status: TRANSACTION_STATUS.COMPLETED,
+        message: 'Deposit confirmed manually because verification is disabled. Balance updated.',
+        confirmations: 0,
+        confirmationTarget,
+      };
+    }
+
+    if (verification.status === 'ERROR') {
+      await this.recordVerificationProbe(transaction.id, {
+        confirmations: verification.confirmations ?? 0,
+        confirmationTarget,
+        notes: verification.message ?? 'Verification error',
+      });
+
+      return {
+        success: false,
+        status: TRANSACTION_STATUS.AWAITING_CONFIRMATION,
+        message:
+          verification.message ??
+          'We registered your transaction hash but could not verify confirmations yet. We will retry shortly.',
+        confirmations: verification.confirmations ?? 0,
+        confirmationTarget,
+      };
+    }
+
+    if (verification.status === 'NOT_FOUND' || verification.status === 'MISMATCH') {
+      await this.rejectDeposit(transaction.id, verification.message ?? 'Transaction could not be verified');
+
+      throw new BadRequestException(
+        verification.message ?? 'The provided transaction hash does not match the deposit ticket.',
+      );
+    }
+
+    if (verification.status === 'CONFIRMED' && verification.confirmations >= confirmationTarget) {
+      await this.finalizeDeposit(
+        transaction,
+        confirmationTarget,
+        verification.confirmations,
+        verification.message,
+        verification.raw,
+      );
+
+      return {
+        success: true,
+        status: TRANSACTION_STATUS.COMPLETED,
+        message: 'Deposit verified on-chain and credited to your vault.',
+        confirmations: verification.confirmations,
+        confirmationTarget,
+      };
+    }
+
+    await this.recordVerificationProbe(transaction.id, {
+      confirmations: verification.confirmations ?? 0,
+      confirmationTarget,
+      notes: verification.message,
+    });
+
+    return {
+      success: false,
+      status: TRANSACTION_STATUS.AWAITING_CONFIRMATION,
+      message:
+        verification.message ??
+        'Deposit proof accepted. We will credit your balance once sufficient confirmations are reached.',
+      confirmations: verification.confirmations ?? 0,
+      confirmationTarget,
+    };
+  }
+
+  private async finalizeDeposit(
+    transaction: DepositTransactionEntity,
+    confirmationTarget: number,
+    confirmations: number,
+    verificationNotes?: string,
+    verificationPayload?: unknown,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (prisma) => {
+      await (prisma as unknown as { transaction: any }).transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: TRANSACTION_STATUS.COMPLETED,
+          confirmations,
+          confirmationTarget,
+          confirmedAt: new Date(),
+          lastVerifiedAt: new Date(),
+          verificationNotes: verificationNotes ?? null,
+          verificationPayload: verificationPayload ?? undefined,
+        },
+      });
+
+      await (prisma as unknown as { user: any }).user.update({
+        where: { id: transaction.userId },
+        data: {
+          walletBalance: { increment: transaction.amount },
+        },
+      });
+    });
+
+    await this.notificationsService.sendNotification({
+      userId: transaction.userId,
+      title: 'Deposit confirmed',
+      message: 'Your crypto deposit was verified on-chain and has been credited to your vault.',
+    });
+  }
+
+  private async rejectDeposit(transactionId: string, reason: string) {
+    await (this.prisma as unknown as { transaction: any }).transaction.update({
+      where: { id: transactionId },
+      data: {
+        status: TRANSACTION_STATUS.REJECTED,
+        verificationNotes: reason,
+        lastVerifiedAt: new Date(),
+      },
+    });
+  }
+
+  private async recordVerificationProbe(
+    transactionId: string,
+    payload: { confirmations: number; confirmationTarget: number; notes?: string },
+  ) {
+    await (this.prisma as unknown as { transaction: any }).transaction.update({
+      where: { id: transactionId },
+      data: {
+        confirmations: payload.confirmations,
+        confirmationTarget: payload.confirmationTarget,
+        verificationNotes: payload.notes ?? null,
+        lastVerifiedAt: new Date(),
+      },
+    });
+  }
+
+  private toNumber(value: Prisma.Decimal): number | null {
+    const numeric = Number.parseFloat(value.toString());
+    return Number.isFinite(numeric) ? numeric : null;
   }
 }

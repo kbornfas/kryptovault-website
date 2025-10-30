@@ -1,7 +1,7 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsUUID } from 'class-validator';
 
 export class StopAutomationDto {
   @IsOptional()
-  @IsString()
+  @IsUUID('4')
   sessionId?: string;
 }

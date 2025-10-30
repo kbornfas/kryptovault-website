@@ -1,19 +1,20 @@
 import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  InternalServerErrorException,
-  NotFoundException,
-  Param,
-  Post,
-  UseGuards,
-  UsePipes,
-  ValidationPipe
+    BadRequestException,
+    Body,
+    Controller,
+    Get,
+    InternalServerErrorException,
+    NotFoundException,
+    Param,
+    Post,
+    UseGuards,
+    UsePipes,
+    ValidationPipe
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User } from '../auth/user.decorator';
-import { CreateNotificationDto, NotificationsService } from './notifications.service';
+import { CreateNotificationDto } from './dto/create-notification.dto';
+import { NotificationsService } from './notifications.service';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)

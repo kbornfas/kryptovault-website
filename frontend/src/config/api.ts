@@ -10,6 +10,7 @@ export const API_ENDPOINTS = {
   TRANSACTIONS: '/transactions',
   NOTIFICATIONS: '/notifications',
   PAYMENTS: '/payments',
+  CRYPTO_PAYMENTS: '/crypto-payments',
   ADMIN: '/admin',
   TRADES: '/trades',
   AUTOMATION: '/automation',

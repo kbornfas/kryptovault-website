@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import path from "path";
-import { defineConfig, type PluginOption } from "vite";
+import type { PluginOption } from "vite";
+import { defineConfig } from "vitest/config";
 
 const plugins: PluginOption[] = [react()];
 const base = process.env.VERCEL ? '/' : '/kryptovault-website/';
@@ -20,7 +21,7 @@ export default defineConfig({
       "/api": {
         target: process.env.VITE_API_URL || "http://localhost:3000",
         changeOrigin: true,
-        rewrite: (path) => path,
+        rewrite: (pathValue: string) => pathValue,
       },
     },
   },
@@ -28,5 +29,13 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    coverage: {
+      reporter: ['text', 'lcov'],
+    },
   },
 });

@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { CryptoType } from '@prisma/client';
-import { IsEnum, IsNumber, IsString } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User } from '../auth/user.decorator';
 import { CryptoPaymentsService } from './crypto-payments.service';
@@ -15,13 +15,14 @@ export class InitiateDepositDto {
 
 export class ConfirmDepositDto {
   @IsString()
+  transactionId: string;
+
+  @IsString()
   txHash: string;
 
+  @IsOptional()
   @IsNumber()
-  amount: number;
-
-  @IsEnum(CryptoType)
-  cryptoType: CryptoType;
+  amount?: number;
 }
 
 @Controller('crypto-payments')
@@ -51,12 +52,7 @@ export class CryptoPaymentsController {
     @Body() confirmDto: ConfirmDepositDto,
   ) {
     try {
-      return await this.cryptoPaymentsService.confirmDeposit(
-        confirmDto.txHash,
-        userId,
-        confirmDto.amount,
-        confirmDto.cryptoType,
-      );
+      return await this.cryptoPaymentsService.confirmDeposit(userId, confirmDto);
     } catch (error) {
       throw new BadRequestException(error.message);
     }

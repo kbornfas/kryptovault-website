@@ -1,13 +1,35 @@
+import { useAuth } from '@/context/AuthContext';
 import { FormEvent, useState } from 'react';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as { response?: { data?: { message?: string } }; message?: string };
+    const responseMessage = maybeError.response?.data?.message;
+    if (typeof responseMessage === 'string' && responseMessage.trim().length > 0) {
+      return responseMessage;
+    }
+    if (typeof maybeError.message === 'string' && maybeError.message.trim().length > 0) {
+      return maybeError.message;
+    }
+  }
+
+  return fallback;
+};
 
 const ResetPassword = () => {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { requestPasswordReset } = useAuth();
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = email.trim();
 
@@ -17,10 +39,22 @@ const ResetPassword = () => {
       return;
     }
 
-    setStatus('success');
-    setMessage(
-      'If an account exists for this email, a secure reset link has been dispatched. Check your inbox for next steps.',
-    );
+    try {
+      setIsSubmitting(true);
+      const response = await requestPasswordReset(trimmed);
+      setStatus('success');
+      setMessage(response.message);
+    } catch (error) {
+      setStatus('error');
+      setMessage(
+        getErrorMessage(
+          error,
+          'We could not process your request right now. Please try again in a moment.',
+        ),
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -56,9 +90,10 @@ const ResetPassword = () => {
         <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="submit"
-            className="inline-flex items-center justify-center rounded-lg bg-purple-600 px-6 py-3 text-base font-semibold text-white transition hover:bg-purple-500"
+            disabled={isSubmitting}
+            className="inline-flex items-center justify-center rounded-lg bg-purple-600 px-6 py-3 text-base font-semibold text-white transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Send Reset Link
+            {isSubmitting ? 'Sending...' : 'Send Reset Link'}
           </button>
           <p className="text-sm text-indigo-100/70">
             Need additional help? Contact our 24/7 vault support team at support@kryptovault.com.

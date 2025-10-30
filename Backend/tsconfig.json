@@ -19,12 +19,16 @@
     "noFallthroughCasesInSwitch": false,
     "esModuleInterop": true,
     "types": [
-      "node"
+      "node",
+      "jest"
     ],
     "paths": {
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*",
+    "test/**/*"
+  ],
   "exclude": ["node_modules", "dist"]
 }

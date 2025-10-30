@@ -23,6 +23,11 @@ model User {
   verificationExpiresAt DateTime?
   verifiedAt     DateTime?
   lastLoginAt    DateTime?
+  verificationFailedAttempts Int @default(0)
+  passwordResetToken String?
+  passwordResetExpiresAt DateTime?
+  passwordResetRequestedAt DateTime?
+  passwordResetAttempts Int @default(0)
   investments    Investment[]
   transactions   Transaction[]
   notifications  Notification[]
@@ -30,6 +35,8 @@ model User {
   walletBalance  Decimal         @default(0)
   kycStatus      KYCStatus       @default(PENDING)
   profile        Profile?
+  refreshTokens  RefreshToken[]
+  authEvents     AuthEvent[]
 }
 
 model Profile {
@@ -84,6 +91,12 @@ model Transaction {
   txHash        String?   // Blockchain transaction hash
   walletAddress String?   // Wallet address used for the transaction
   description   String?
+  confirmations Int       @default(0)
+  confirmationTarget Int  @default(0)
+  lastVerifiedAt DateTime?
+  confirmedAt   DateTime?
+  verificationNotes String?
+  verificationPayload Json?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 }
@@ -128,6 +141,49 @@ model TradeExecution {
   updatedAt DateTime     @updatedAt
 }
 
+model AutomationSession {
+  id             String            @id @default(uuid())
+  userId         String
+  user           User              @relation(fields: [userId], references: [id])
+  runsRequested  Int
+  runsCompleted  Int               @default(0)
+  currencies     String[]
+  stakePerRun    Decimal
+  strategyPreset String?
+  status         AutomationStatus  @default(RUNNING)
+  startedAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  stoppedAt      DateTime?
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  issuedAt   DateTime @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthEvent {
+  id         String         @id @default(uuid())
+  userId     String?
+  user       User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType  AuthEventType
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+
+  @@index([userId])
+}
+
 enum Role {
   USER
   ADMIN
@@ -165,8 +221,10 @@ enum TradeStatus {
 
 enum TransactionStatus {
   PENDING
+  AWAITING_CONFIRMATION
   COMPLETED
   FAILED
+  REJECTED
 }
 
 enum InvestmentStatus {
@@ -179,4 +237,20 @@ enum KYCStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum AutomationStatus {
+  RUNNING
+  STOPPED
+  COMPLETED
+}
+
+enum AuthEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET_COMPLETE
+  VERIFICATION_REQUEST
+  VERIFICATION_COMPLETE
 }

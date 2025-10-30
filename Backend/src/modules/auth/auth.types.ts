@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, Length, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, Length, MinLength } from 'class-validator';
 
 export interface JwtPayload {
   sub: string;
@@ -9,6 +9,7 @@ export interface JwtPayload {
 
 export interface LoginResponse {
   access_token: string;
+  refresh_token?: string;
   user: {
     id: string;
     email: string;
@@ -18,6 +19,7 @@ export interface LoginResponse {
     lastLoginAt?: string | null;
     verifiedAt?: string | null;
     walletBalance?: string;
+    verificationFailedAttempts?: number;
   };
 }
 
@@ -33,6 +35,19 @@ export interface ResendVerificationResponse {
   email: string;
   verificationExpiresAt: string;
   debugCode?: string;
+  verificationFailedAttempts?: number;
+}
+
+export interface PasswordResetRequestResponse {
+  email: string;
+  requested: boolean;
+  message: string;
+}
+
+export interface PasswordResetCompletionResponse extends LoginResponse {}
+
+export interface LogoutResponse {
+  success: boolean;
 }
 
 export class RegisterDto {
@@ -69,4 +84,28 @@ export class VerifyEmailDto {
 export class ResendVerificationDto {
   @IsEmail()
   email!: string;
+}
+
+export class RequestPasswordResetDto {
+  @IsEmail()
+  email!: string;
+}
+
+export class CompletePasswordResetDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @Length(40, 128)
+  token!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}
+
+export class RefreshTokenDto {
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
 }
